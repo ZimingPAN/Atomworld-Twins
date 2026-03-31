@@ -408,10 +408,12 @@ def train_step(model: KMCGraphMuZeroModel, optimizer: torch.optim.Optimizer,
         entropy_coeff = 0.0
 
     # Total loss
-    # Time supervision loss — teach the time_head to predict physical Δt
-    time_pred = model.predict_time_delta(latent)
-    time_loss = F.mse_loss(time_pred, delta_ts.clamp(0, 100))
-    loss = policy_loss + reward_loss + 0.25 * value_loss + 0.2 * time_loss - entropy_coeff * entropy
+    # Time supervision loss — train in log-space, detach latent so time head
+    # gets strong gradients without interfering with policy/reward backbone
+    log_time_pred = model.predict_log_time_delta(latent.detach())
+    log_time_target = torch.log(delta_ts.clamp(min=1e-10))
+    time_loss = F.mse_loss(log_time_pred, log_time_target)
+    loss = policy_loss + reward_loss + 0.25 * value_loss + 1.0 * time_loss - entropy_coeff * entropy
 
     optimizer.zero_grad()
     loss.backward()

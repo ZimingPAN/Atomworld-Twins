@@ -10,3 +10,7 @@ __pycache__/
 
 # 忽略 Mac 系统产生的隐藏文件
 .DS_Store
+
+/doc/
+
+/results/

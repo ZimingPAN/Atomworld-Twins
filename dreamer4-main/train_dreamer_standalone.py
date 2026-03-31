@@ -223,14 +223,17 @@ class DreamerKMCAgent(nn.Module):
             nn.Linear(128, 1),
         )
 
-        # Physics time head — conditioned on action
+        # Physics time head — conditioned on action, outputs log(Δt)
         self.time_head = nn.Sequential(
             nn.LayerNorm(latent_flat + action_space_size),
             nn.Linear(latent_flat + action_space_size, 64),
             nn.SiLU(),
             nn.Linear(64, 1),
-            nn.Softplus(),
         )
+        # Initialize time_head output bias to log(~3e-5) so predictions
+        # start at the correct physical Δt scale (Poisson process)
+        with torch.no_grad():
+            nn.init.constant_(self.time_head[-1].bias, -10.0)  # exp(-10) ≈ 4.5e-5
 
         # Energy prediction head — conditioned on action
         self.energy_head = nn.Sequential(
@@ -289,6 +292,16 @@ class DreamerKMCAgent(nn.Module):
         return self.reward_head(inp).squeeze(-1)
 
     def forward_time(self, latent_flat: torch.Tensor, action: torch.Tensor = None) -> torch.Tensor:
+        """Return predicted Δt (exponentiated from log-space)."""
+        if action is not None:
+            action_onehot = F.one_hot(action.long(), self.action_space_size).float()
+            inp = torch.cat([latent_flat, action_onehot], dim=-1)
+        else:
+            inp = torch.cat([latent_flat, torch.zeros(latent_flat.shape[0], self.action_space_size, device=latent_flat.device)], dim=-1)
+        return torch.exp(self.time_head(inp).squeeze(-1))
+
+    def forward_log_time(self, latent_flat: torch.Tensor, action: torch.Tensor = None) -> torch.Tensor:
+        """Return raw log-space prediction for training loss."""
         if action is not None:
             action_onehot = F.one_hot(action.long(), self.action_space_size).float()
             inp = torch.cat([latent_flat, action_onehot], dim=-1)
@@ -398,9 +411,11 @@ def train_step(agent: DreamerKMCAgent, optimizer: torch.optim.Optimizer,
     reward_pred = agent.forward_reward(latent, actions)
     reward_loss = F.mse_loss(reward_pred, rewards)
 
-    # Time prediction loss — conditioned on action
-    time_pred = agent.forward_time(latent, actions)
-    time_loss = F.mse_loss(time_pred, delta_ts.clamp(0, 100))
+    # Time prediction loss — train in log-space, detach latent so time head
+    # gets strong gradients without interfering with policy/reward backbone
+    log_time_pred = agent.forward_log_time(latent.detach(), actions)
+    log_time_target = torch.log(delta_ts.clamp(min=1e-10))
+    time_loss = F.mse_loss(log_time_pred, log_time_target)
 
     # Energy prediction loss (physics head) — conditioned on action
     action_onehot = F.one_hot(actions.long(), agent.action_space_size).float()
@@ -409,7 +424,7 @@ def train_step(agent: DreamerKMCAgent, optimizer: torch.optim.Optimizer,
     energy_loss = F.mse_loss(energy_pred, delta_Es)
 
     # Total loss — scale policy loss down to prevent it from dominating world model learning
-    loss = 0.1 * policy_loss + 0.5 * value_loss + 1.0 * reward_loss + 0.2 * time_loss + 0.2 * energy_loss
+    loss = 0.1 * policy_loss + 0.5 * value_loss + 1.0 * reward_loss + 1.0 * time_loss + 0.2 * energy_loss
 
     result = {
         "loss": 0.0,

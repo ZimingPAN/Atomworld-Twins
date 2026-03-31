@@ -132,6 +132,9 @@ class KMCDynamicsWorldModel(DynamicsWorldModel):
             nn.SiLU(),
             nn.Linear(dim_latent, 1),
         )
+        # Initialize time_head output bias to log(~3e-5)
+        with torch.no_grad():
+            nn.init.constant_(self.time_head[-1].bias, -10.0)
         self.energy_head = nn.Sequential(
             nn.LayerNorm(dim_latent),
             nn.Linear(dim_latent, dim_latent),
@@ -155,7 +158,7 @@ class KMCDynamicsWorldModel(DynamicsWorldModel):
             latents = latents.mean(dim=2)
         if latents.ndim == 3:
             latents = latents.mean(dim=1)
-        return F.softplus(self.time_head(latents)).squeeze(-1)
+        return torch.exp(self.time_head(latents)).squeeze(-1)
 
     def predict_energy_delta(self, latents: torch.Tensor) -> torch.Tensor:
         if latents.ndim == 5:

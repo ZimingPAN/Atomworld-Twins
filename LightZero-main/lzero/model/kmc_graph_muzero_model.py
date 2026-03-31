@@ -188,6 +188,14 @@ class KMCGraphMuZeroModel(nn.Module):
         )
         self.latest_time_delta: torch.Tensor | None = None
 
+        # Initialize time_head output bias to log(~3e-5) so predictions
+        # start at the correct physical Δt scale (Poisson process)
+        with torch.no_grad():
+            for m in reversed(list(self.time_head.modules())):
+                if isinstance(m, nn.Linear) and m.out_features == 1:
+                    nn.init.constant_(m.bias, -10.0)  # exp(-10) ≈ 4.5e-5
+                    break
+
         if self.self_supervised_learning_loss:
             self.projection_input_dim = latent_state_dim
             self.projection = nn.Sequential(
@@ -211,7 +219,7 @@ class KMCGraphMuZeroModel(nn.Module):
         batch_size = obs.size(0)
         latent_state = self._representation(obs)
         policy_logits, value = self._prediction(latent_state)
-        self.latest_time_delta = F.softplus(self.time_head(latent_state)).squeeze(-1)
+        self.latest_time_delta = torch.exp(self.time_head(latent_state)).squeeze(-1)
         return MZNetworkOutput(
             value=value,
             reward=[0.0 for _ in range(batch_size)],
@@ -222,11 +230,16 @@ class KMCGraphMuZeroModel(nn.Module):
     def recurrent_inference(self, latent_state: torch.Tensor, action: torch.Tensor) -> MZNetworkOutput:
         next_latent_state, reward = self._dynamics(latent_state, action)
         policy_logits, value = self._prediction(next_latent_state)
-        self.latest_time_delta = F.softplus(self.time_head(next_latent_state)).squeeze(-1)
+        self.latest_time_delta = torch.exp(self.time_head(next_latent_state)).squeeze(-1)
         return MZNetworkOutput(value=value, reward=reward, policy_logits=policy_logits, latent_state=next_latent_state)
 
     def predict_time_delta(self, latent_state: torch.Tensor) -> torch.Tensor:
-        return F.softplus(self.time_head(latent_state)).squeeze(-1)
+        """Predict physical time delta. Output in log-space, exponentiate for real Δt."""
+        return torch.exp(self.time_head(latent_state)).squeeze(-1)
+
+    def predict_log_time_delta(self, latent_state: torch.Tensor) -> torch.Tensor:
+        """Return raw log-space prediction for training loss."""
+        return self.time_head(latent_state).squeeze(-1)
 
     def _representation(self, observation: torch.Tensor) -> torch.Tensor:
         latent_state = self.representation_network(observation)
