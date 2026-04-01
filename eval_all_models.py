@@ -37,6 +37,19 @@ def build_eval_cfg(args):
     }
 
 
+def extract_model_state_dict(checkpoint):
+    if isinstance(checkpoint, dict) and "model" in checkpoint:
+        return checkpoint["model"]
+    return checkpoint
+
+
+def infer_dreamer_feature_flags(state_dict):
+    return {
+        "use_topology_head": any(key.startswith("topology_head.") for key in state_dict),
+        "use_shortcut_forcing": "horizon_embed.weight" in state_dict,
+    }
+
+
 def eval_ppo(args, eval_cfg, device):
     sys.path.insert(0, os.path.join(ROOT, "RLKMC-MASSIVE-main"))
     from train_ppo_standalone import PPOGNNAgent, KMCEnvWrapper
@@ -145,6 +158,10 @@ def eval_dreamer(args, eval_cfg, device):
     obs_dim = obs.shape[0]
     action_dim = mask.shape[0]
 
+    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    state_dict = extract_model_state_dict(ckpt)
+    feature_flags = infer_dreamer_feature_flags(state_dict)
+
     agent = DreamerKMCAgent(
         dim_latent=16,
         max_vacancies=args.max_vacancies,
@@ -155,16 +172,11 @@ def eval_dreamer(args, eval_cfg, device):
         neighbor_order=args.neighbor_order,
         action_space_size=action_dim,
         graph_hidden_size=32,
-        use_topology_head=True,
-        use_shortcut_forcing=True,
+        use_topology_head=feature_flags["use_topology_head"],
+        use_shortcut_forcing=feature_flags["use_shortcut_forcing"],
     ).to(device)
 
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    # best_model.pt saves agent state_dict directly; checkpoint_*.pt has 'model' key
-    if isinstance(ckpt, dict) and "model" in ckpt:
-        agent.load_state_dict(ckpt["model"])
-    else:
-        agent.load_state_dict(ckpt)
+    agent.load_state_dict(state_dict)
     agent.eval()
 
     all_results = []
@@ -205,7 +217,7 @@ def main():
     parser.add_argument("--lattice_size", type=int, nargs=3, default=[40, 40, 40])
     parser.add_argument("--eval_cu_density", type=float, default=0.005)
     parser.add_argument("--eval_v_density", type=float, default=0.0002)
-    parser.add_argument("--max_episode_steps", type=int, default=50)
+    parser.add_argument("--max_episode_steps", type=int, default=200)
     parser.add_argument("--temperature", type=float, default=300.0)
     parser.add_argument("--reward_scale", type=float, default=10.0)
     parser.add_argument("--neighbor_order", type=str, default="2NN")
@@ -213,7 +225,7 @@ def main():
     parser.add_argument("--max_defects", type=int, default=64)
     parser.add_argument("--max_shells", type=int, default=16)
     # MuZero specific
-    parser.add_argument("--mcts_sims", type=int, default=50)
+    parser.add_argument("--mcts_sims", type=int, default=16)
     # Output
     parser.add_argument("--output", type=str, default=None, help="JSON output file")
     args = parser.parse_args()

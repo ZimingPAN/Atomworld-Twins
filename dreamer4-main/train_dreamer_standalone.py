@@ -50,6 +50,8 @@ class Transition:
     action_mask: np.ndarray
     done: bool
     delta_t: float
+    expected_delta_t: float
+    total_rate: float
     delta_E: float
 
 
@@ -112,6 +114,15 @@ class KMCEnvWrapper:
         self.timestep = 0
         return self._obs(), self._mask()
 
+    def current_total_rate(self) -> float:
+        self.env._ensure_diffusion_rates()
+        flat_rates = [rate for vac_rates in self.env.diffusion_rates for rate in vac_rates if rate > 0]
+        return float(np.sum(flat_rates)) if flat_rates else 0.0
+
+    def current_expected_delta_t(self) -> float:
+        total_rate = self.current_total_rate()
+        return 1.0 / total_rate if total_rate > 0 else 0.0
+
     def step(self, action: int) -> tuple[np.ndarray, np.ndarray, float, bool, dict]:
         n_vac = self.env.V_nums
         vac_idx = action // 8
@@ -119,9 +130,8 @@ class KMCEnvWrapper:
             vac_idx = vac_idx % max(n_vac, 1)
             action = vac_idx * 8 + (action % 8)
 
-        self.env._ensure_diffusion_rates()
-        flat_rates = [r for vr in self.env.diffusion_rates for r in vr if r > 0]
-        total_rate = float(np.sum(flat_rates)) if flat_rates else 0.0
+        total_rate = self.current_total_rate()
+        expected_delta_t = 1.0 / total_rate if total_rate > 0 else 0.0
         self.env.step_fast(int(action), self.timestep)
 
         delta_t = -np.log(np.random.rand()) / total_rate if total_rate > 0 else 0.0
@@ -134,7 +144,12 @@ class KMCEnvWrapper:
         self.env.energy_history.append(energy_after)
         self.timestep += 1
         done = self.timestep >= self.max_steps
-        return self._obs(), self._mask(), reward, done, {"delta_t": delta_t, "delta_E": delta_E}
+        return self._obs(), self._mask(), reward, done, {
+            "delta_t": delta_t,
+            "expected_delta_t": expected_delta_t,
+            "total_rate": total_rate,
+            "delta_E": delta_E,
+        }
 
     def _obs(self) -> np.ndarray:
         share_obs = np.zeros(self.shape.stats_dim, dtype=np.float32)
@@ -293,13 +308,12 @@ class DreamerKMCAgent(nn.Module):
         return self.reward_head(inp).squeeze(-1)
 
     def forward_time(self, latent_flat: torch.Tensor, action: torch.Tensor = None) -> torch.Tensor:
-        """Return predicted Δt (exponentiated from log-space).
-        Δt is a state property (Poisson process), action arg is ignored for compatibility."""
+        """Return predicted state time scale E[Δt | s] = 1 / Γ_tot.
+        The realized Poisson sample remains stochastic and is not directly predicted."""
         return torch.exp(self.time_head(latent_flat).squeeze(-1))
 
     def forward_log_time(self, latent_flat: torch.Tensor, action: torch.Tensor = None) -> torch.Tensor:
-        """Return raw log-space prediction for training loss.
-        Δt is a state property (Poisson process), action arg is ignored for compatibility."""
+        """Return raw log-space prediction for the state time scale."""
         return self.time_head(latent_flat).squeeze(-1)
 
     def reconstruct_topology(self, latent_flat: torch.Tensor):
@@ -342,7 +356,10 @@ def collect_episode(env: KMCEnvWrapper, agent: DreamerKMCAgent,
         buffer.push(Transition(
             obs=obs, action=action, reward=reward,
             next_obs=next_obs, action_mask=mask, done=done,
-            delta_t=info["delta_t"], delta_E=info["delta_E"],
+            delta_t=info["delta_t"],
+            expected_delta_t=info["expected_delta_t"],
+            total_rate=info["total_rate"],
+            delta_E=info["delta_E"],
         ))
 
         obs, mask = next_obs, next_mask
@@ -362,6 +379,7 @@ def train_step(agent: DreamerKMCAgent, optimizer: torch.optim.Optimizer,
     masks = torch.tensor(np.stack([t.action_mask for t in batch]), dtype=torch.bool, device=device)
     dones = torch.tensor([t.done for t in batch], dtype=torch.float32, device=device)
     delta_ts = torch.tensor([t.delta_t for t in batch], dtype=torch.float32, device=device)
+    expected_delta_ts = torch.tensor([t.expected_delta_t for t in batch], dtype=torch.float32, device=device)
     delta_Es = torch.tensor([t.delta_E for t in batch], dtype=torch.float32, device=device)
 
     B = len(batch)
@@ -404,10 +422,9 @@ def train_step(agent: DreamerKMCAgent, optimizer: torch.optim.Optimizer,
     reward_pred = agent.forward_reward(latent, actions)
     reward_loss = F.mse_loss(reward_pred, rewards)
 
-    # Time prediction loss — train in log-space, detach latent so time head
-    # gets strong gradients without interfering with policy/reward backbone
+    # Time prediction learns the identifiable state statistic E[Δt | s] = 1 / Γ_tot.
     log_time_pred = agent.forward_log_time(latent.detach())
-    log_time_target = torch.log(delta_ts.clamp(min=1e-10))
+    log_time_target = torch.log(expected_delta_ts.clamp(min=1e-10))
     time_loss = F.mse_loss(log_time_pred, log_time_target)
 
     # Energy prediction loss (physics head) — conditioned on action
@@ -512,9 +529,9 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--lattice_size", type=int, nargs=3, default=[40, 40, 40])
-    parser.add_argument("--cu_density", type=float, default=0.05)
+    parser.add_argument("--cu_density", type=float, default=0.0134)
     parser.add_argument("--v_density", type=float, default=0.0002)
-    parser.add_argument("--max_episode_steps", type=int, default=50)
+    parser.add_argument("--max_episode_steps", type=int, default=200)
     parser.add_argument("--temperature", type=float, default=300.0)
     parser.add_argument("--reward_scale", type=float, default=10.0)
     parser.add_argument("--neighbor_order", type=str, default="2NN")
@@ -524,29 +541,29 @@ def main():
     parser.add_argument("--dim_latent", type=int, default=16)
 
     # Training
-    parser.add_argument("--collect_episodes", type=int, default=4)
-    parser.add_argument("--train_steps_per_collect", type=int, default=50)
-    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--collect_episodes", type=int, default=2)
+    parser.add_argument("--train_steps_per_collect", type=int, default=30)
+    parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--buffer_size", type=int, default=50000)
     parser.add_argument("--total_iterations", type=int, default=500)
-    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--discount", type=float, default=0.99)
     parser.add_argument("--epsilon_start", type=float, default=0.3)
     parser.add_argument("--epsilon_end", type=float, default=0.05)
     parser.add_argument("--eval_freq", type=int, default=5)
     parser.add_argument("--eval_episodes", type=int, default=5)
-    parser.add_argument("--eval_cu_density", type=float, default=None,
-                        help="Cu density for eval (default: same as training)")
-    parser.add_argument("--eval_v_density", type=float, default=None,
-                        help="V density for eval (default: same as training)")
+    parser.add_argument("--eval_cu_density", type=float, default=0.005,
+                        help="Cu density for eval")
+    parser.add_argument("--eval_v_density", type=float, default=0.0002,
+                        help="V density for eval")
     parser.add_argument("--save_freq", type=int, default=50)
     parser.add_argument("--save_dir", type=str, default="dreamer_kmc_results")
     # Feature flags
-    parser.add_argument("--use_topology_head", action="store_true", default=False,
+    parser.add_argument("--use_topology_head", action=argparse.BooleanOptionalAction, default=True,
                         help="Feature 4: topology reconstruction self-supervised loss")
-    parser.add_argument("--use_shortcut_forcing", action="store_true", default=False,
+    parser.add_argument("--use_shortcut_forcing", action=argparse.BooleanOptionalAction, default=True,
                         help="Feature 5: variable horizon shortcut forcing")
-    parser.add_argument("--use_physics_discount", action="store_true", default=False,
+    parser.add_argument("--use_physics_discount", action=argparse.BooleanOptionalAction, default=True,
                         help="Feature 1: use physics-time discount γ=exp(-Δt/τ)")
     parser.add_argument("--time_scale_tau", type=float, default=1.0,
                         help="Time scale τ for physics discount γ=exp(-Δt/τ)")

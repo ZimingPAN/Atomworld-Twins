@@ -188,8 +188,7 @@ class KMCGraphMuZeroModel(nn.Module):
         )
         self.latest_time_delta: torch.Tensor | None = None
 
-        # Initialize time_head output bias to log(~3e-5) so predictions
-        # start at the correct physical Δt scale (Poisson process)
+        # Initialize around the expected waiting-time scale E[Δt | s] ≈ 3e-5.
         with torch.no_grad():
             for m in reversed(list(self.time_head.modules())):
                 if isinstance(m, nn.Linear) and m.out_features == 1:
@@ -234,11 +233,12 @@ class KMCGraphMuZeroModel(nn.Module):
         return MZNetworkOutput(value=value, reward=reward, policy_logits=policy_logits, latent_state=next_latent_state)
 
     def predict_time_delta(self, latent_state: torch.Tensor) -> torch.Tensor:
-        """Predict physical time delta. Output in log-space, exponentiate for real Δt."""
+        """Predict the state time scale E[Δt | s] = 1 / Γ_tot.
+        The realized Poisson sample remains stochastic and is not directly predicted."""
         return torch.exp(self.time_head(latent_state)).squeeze(-1)
 
     def predict_log_time_delta(self, latent_state: torch.Tensor) -> torch.Tensor:
-        """Return raw log-space prediction for training loss."""
+        """Return raw log-space prediction for the state time scale."""
         return self.time_head(latent_state).squeeze(-1)
 
     def _representation(self, observation: torch.Tensor) -> torch.Tensor:

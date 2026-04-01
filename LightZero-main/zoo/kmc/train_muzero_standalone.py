@@ -49,6 +49,8 @@ class Transition:
     action_mask: np.ndarray  # bool
     done: bool
     delta_t: float = 0.0     # physical time step from KMC Poisson process
+    expected_delta_t: float = 0.0  # E[Δt | s] = 1 / Γ_tot for current state
+    total_rate: float = 0.0
 
 
 class ReplayBuffer:
@@ -114,6 +116,15 @@ class KMCEnvWrapper:
         mask = self._mask()
         return obs, mask
 
+    def current_total_rate(self) -> float:
+        self.env._ensure_diffusion_rates()
+        flat_rates = [rate for vac_rates in self.env.diffusion_rates for rate in vac_rates if rate > 0]
+        return float(np.sum(flat_rates)) if flat_rates else 0.0
+
+    def current_expected_delta_t(self) -> float:
+        total_rate = self.current_total_rate()
+        return 1.0 / total_rate if total_rate > 0 else 0.0
+
     def step(self, action: int) -> tuple[np.ndarray, np.ndarray, float, bool, dict]:
         # Clamp action to valid vacancy range
         n_vac = self.env.V_nums
@@ -122,9 +133,8 @@ class KMCEnvWrapper:
             vac_idx = vac_idx % max(n_vac, 1)
             action = vac_idx * 8 + (action % 8)
 
-        self.env._ensure_diffusion_rates()
-        flat_rates = [r for vr in self.env.diffusion_rates for r in vr if r > 0]
-        total_rate = float(np.sum(flat_rates)) if flat_rates else 0.0
+        total_rate = self.current_total_rate()
+        expected_delta_t = 1.0 / total_rate if total_rate > 0 else 0.0
 
         self.env.step_fast(int(action), self.timestep)
 
@@ -146,7 +156,12 @@ class KMCEnvWrapper:
 
         obs = self._obs()
         mask = self._mask()
-        info = {"delta_t": delta_t, "delta_E": delta_E}
+        info = {
+            "delta_t": delta_t,
+            "expected_delta_t": expected_delta_t,
+            "total_rate": total_rate,
+            "delta_E": delta_E,
+        }
         return obs, mask, reward, done, info
 
     def _obs(self) -> np.ndarray:
@@ -293,6 +308,8 @@ def collect_episode(env: KMCEnvWrapper, model: KMCGraphMuZeroModel,
             obs=obs, action=action, reward=reward,
             next_obs=next_obs, action_mask=mask, done=done,
             delta_t=info.get("delta_t", 0.0),
+            expected_delta_t=info.get("expected_delta_t", 0.0),
+            total_rate=info.get("total_rate", 0.0),
         ))
 
         obs, mask = next_obs, next_mask
@@ -364,6 +381,7 @@ def train_step(model: KMCGraphMuZeroModel, optimizer: torch.optim.Optimizer,
 
     # 5. Value loss (bootstrap target)
     delta_ts = torch.tensor([t.delta_t for t in batch], dtype=torch.float32, device=device)
+    expected_delta_ts = torch.tensor([t.expected_delta_t for t in batch], dtype=torch.float32, device=device)
     with torch.no_grad():
         next_out = model.initial_inference(next_obs)
         if model.categorical_distribution:
@@ -410,10 +428,11 @@ def train_step(model: KMCGraphMuZeroModel, optimizer: torch.optim.Optimizer,
         entropy_coeff = 0.0
 
     # Total loss
-    # Time supervision loss — train in log-space, detach latent so time head
-    # gets strong gradients without interfering with policy/reward backbone
+    # Time supervision learns the state-identifiable time scale E[Δt | s] = 1 / Γ_tot.
+    # The realized Poisson sample -log(u)/Γ_tot remains stochastic and is only used
+    # for environment time accumulation / SMDP discount on collected data.
     log_time_pred = model.predict_log_time_delta(latent.detach())
-    log_time_target = torch.log(delta_ts.clamp(min=1e-10))
+    log_time_target = torch.log(expected_delta_ts.clamp(min=1e-10))
     time_loss = F.mse_loss(log_time_pred, log_time_target)
     loss = policy_loss + reward_loss + 0.25 * value_loss + 1.0 * time_loss - entropy_coeff * entropy
 
@@ -477,9 +496,9 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--lattice_size", type=int, nargs=3, default=[40, 40, 40])
-    parser.add_argument("--cu_density", type=float, default=0.05)
+    parser.add_argument("--cu_density", type=float, default=0.0134)
     parser.add_argument("--v_density", type=float, default=0.0002)
-    parser.add_argument("--max_episode_steps", type=int, default=50)
+    parser.add_argument("--max_episode_steps", type=int, default=200)
     parser.add_argument("--temperature", type=float, default=300.0)
     parser.add_argument("--reward_scale", type=float, default=10.0)
     parser.add_argument("--neighbor_order", type=str, default="2NN")
@@ -488,31 +507,31 @@ def main():
     parser.add_argument("--max_shells", type=int, default=16)
 
     # Training
-    parser.add_argument("--collect_episodes", type=int, default=4)
-    parser.add_argument("--train_steps_per_collect", type=int, default=50)
-    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--collect_episodes", type=int, default=2)
+    parser.add_argument("--train_steps_per_collect", type=int, default=30)
+    parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--buffer_size", type=int, default=50000)
     parser.add_argument("--total_iterations", type=int, default=500)
-    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--discount", type=float, default=0.99)
-    parser.add_argument("--num_simulations", type=int, default=32)
+    parser.add_argument("--num_simulations", type=int, default=16)
     parser.add_argument("--c_puct", type=float, default=1.25)
     parser.add_argument("--epsilon_start", type=float, default=0.3)
     parser.add_argument("--epsilon_end", type=float, default=0.05)
     parser.add_argument("--eval_freq", type=int, default=5)
     parser.add_argument("--eval_episodes", type=int, default=5)
-    parser.add_argument("--eval_cu_density", type=float, default=None,
-                        help="Cu density for eval (default: same as training)")
-    parser.add_argument("--eval_v_density", type=float, default=None,
-                        help="V density for eval (default: same as training)")
+    parser.add_argument("--eval_cu_density", type=float, default=0.005,
+                        help="Cu density for eval")
+    parser.add_argument("--eval_v_density", type=float, default=0.0002,
+                        help="V density for eval")
     parser.add_argument("--save_freq", type=int, default=50)
     parser.add_argument("--save_dir", type=str, default="muzero_kmc_results")
     # Feature flags
-    parser.add_argument("--use_physics_discount", action="store_true", default=False,
+    parser.add_argument("--use_physics_discount", action=argparse.BooleanOptionalAction, default=True,
                         help="Feature 1: use physics-time discount γ=exp(-Δt/τ) in MCTS and training")
     parser.add_argument("--time_scale_tau", type=float, default=1.0,
                         help="Time scale τ for physics discount γ=exp(-Δt/τ)")
-    parser.add_argument("--use_entropy_reg", action="store_true", default=False,
+    parser.add_argument("--use_entropy_reg", action=argparse.BooleanOptionalAction, default=True,
                         help="Feature 2: temperature-based entropy regularization")
     args = parser.parse_args()
 
