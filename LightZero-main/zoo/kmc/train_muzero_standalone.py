@@ -112,7 +112,9 @@ class KMCEnvWrapper:
             self.env = KMCEnv(self._build_args())
         self.env.reset()
         self.timestep = 0
-        obs = self._obs()
+        # Compute total_rate once, inject into obs
+        total_rate = self.current_total_rate()
+        obs = self._obs(total_rate=total_rate)
         mask = self._mask()
         return obs, mask
 
@@ -154,7 +156,9 @@ class KMCEnvWrapper:
         self.timestep += 1
         done = self.timestep >= self.max_steps
 
-        obs = self._obs()
+        # next_obs needs the post-step total_rate for its stats
+        next_total_rate = self.current_total_rate()
+        obs = self._obs(total_rate=next_total_rate)
         mask = self._mask()
         info = {
             "delta_t": delta_t,
@@ -164,12 +168,16 @@ class KMCEnvWrapper:
         }
         return obs, mask, reward, done, info
 
-    def _obs(self) -> np.ndarray:
+    def _obs(self, total_rate: float | None = None) -> np.ndarray:
         share_obs = np.zeros(self.shape.stats_dim, dtype=np.float32)
         # Feature 3: inject physics parameters into stats vector
         share_obs[0] = self.cfg.get("temperature", 300.0) / 1000.0  # normalized
         share_obs[1] = self.cfg.get("cu_density", 0.05)
         share_obs[2] = self.cfg.get("v_density", 0.0002)
+        # Inject log(Γ_tot) into stats for time_head baseline anchor
+        if total_rate is None:
+            total_rate = self.current_total_rate()
+        share_obs[3] = np.log(max(total_rate, 1e-20))  # log(Γ_tot)
         return build_defect_graph_observation(self.env, shape=self.shape, share_obs=share_obs).astype(np.float32)
 
     def _mask(self) -> np.ndarray:
@@ -429,9 +437,13 @@ def train_step(model: KMCGraphMuZeroModel, optimizer: torch.optim.Optimizer,
 
     # Total loss
     # Time supervision learns the state-identifiable time scale E[Δt | s] = 1 / Γ_tot.
-    # The realized Poisson sample -log(u)/Γ_tot remains stochastic and is only used
-    # for environment time accumulation / SMDP discount on collected data.
-    log_time_pred = model.predict_log_time_delta(latent.detach())
+    # Residual time head: log(E[Δt|s]) = -log(Γ_tot) + residual
+    # log_total_rate was extracted during initial_inference and stored in model
+    log_total_rates = torch.tensor(
+        [np.log(max(t.total_rate, 1e-20)) for t in batch],
+        dtype=torch.float32, device=device,
+    )
+    log_time_pred = model.predict_log_time_delta(latent.detach(), log_total_rate=log_total_rates)
     log_time_target = torch.log(expected_delta_ts.clamp(min=1e-10))
     time_loss = F.mse_loss(log_time_pred, log_time_target)
     loss = policy_loss + reward_loss + 0.25 * value_loss + 1.0 * time_loss - entropy_coeff * entropy
@@ -639,11 +651,12 @@ def main():
         avg_loss = np.mean([l["loss"] for l in train_losses]) if train_losses else 0
         avg_policy_loss = np.mean([l["policy_loss"] for l in train_losses]) if train_losses else 0
         avg_reward_loss = np.mean([l["reward_loss"] for l in train_losses]) if train_losses else 0
+        avg_time_loss = np.mean([l["time_loss"] for l in train_losses]) if train_losses else 0
 
         log_msg = (
             f"[Iter {iteration:4d}/{args.total_iterations}] "
             f"collect_reward={np.mean(collect_rewards):+.4f} "
-            f"loss={avg_loss:.4f} (pol={avg_policy_loss:.4f} rew={avg_reward_loss:.4f}) "
+            f"loss={avg_loss:.4f} (pol={avg_policy_loss:.4f} rew={avg_reward_loss:.4f} time={avg_time_loss:.4f}) "
             f"eps={epsilon:.3f} buf={len(buffer)} time={collect_time:.1f}s"
         )
         print(log_msg)

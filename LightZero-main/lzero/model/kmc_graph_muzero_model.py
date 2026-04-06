@@ -59,7 +59,8 @@ class KMCGraphRepresentationNetwork(nn.Module):
                 activation,
             )
 
-    def forward(self, flat_obs: torch.Tensor) -> torch.Tensor:
+    def forward(self, flat_obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Returns (latent_state, log_total_rate) where log_total_rate is stats[3]."""
         node_attr, node_mask, stats = unflatten_defect_graph_observation(flat_obs, shape=self.observation_shape)
         device = flat_obs.device
         self.graph_encoder = self.graph_encoder.to(device)
@@ -68,8 +69,12 @@ class KMCGraphRepresentationNetwork(nn.Module):
             node_mask.to(device=device, dtype=torch.float32),
         )
         flat_latents = vacancy_latents.reshape(vacancy_latents.shape[0], -1)
-        combined = torch.cat([flat_latents, stats.to(device=device, dtype=torch.float32)], dim=-1)
-        return self.project(combined)
+        stats_f = stats.to(device=device, dtype=torch.float32)
+        combined = torch.cat([flat_latents, stats_f], dim=-1)
+        latent = self.project(combined)
+        # Extract log(Γ_tot) that was injected at stats[3]
+        log_total_rate = stats_f[:, 3]
+        return latent, log_total_rate
 
 
 @MODEL_REGISTRY.register("KMCGraphMuZeroModel")
@@ -187,12 +192,14 @@ class KMCGraphMuZeroModel(nn.Module):
             last_linear_layer_init_zero=last_linear_layer_init_zero,
         )
         self.latest_time_delta: torch.Tensor | None = None
+        self.latest_log_total_rate: torch.Tensor | None = None
 
-        # Initialize around the expected waiting-time scale E[Δt | s] ≈ 3e-5.
+        # Initialize time_head output near zero (residual mode: baseline handles the scale)
         with torch.no_grad():
             for m in reversed(list(self.time_head.modules())):
                 if isinstance(m, nn.Linear) and m.out_features == 1:
-                    nn.init.constant_(m.bias, -10.0)  # exp(-10) ≈ 4.5e-5
+                    nn.init.constant_(m.bias, 0.0)
+                    nn.init.zeros_(m.weight)
                     break
 
         if self.self_supervised_learning_loss:
@@ -216,9 +223,14 @@ class KMCGraphMuZeroModel(nn.Module):
 
     def initial_inference(self, obs: torch.Tensor) -> MZNetworkOutput:
         batch_size = obs.size(0)
-        latent_state = self._representation(obs)
+        latent_state, log_total_rate = self._representation(obs)
+        self.latest_log_total_rate = log_total_rate
         policy_logits, value = self._prediction(latent_state)
-        self.latest_time_delta = torch.exp(self.time_head(latent_state)).squeeze(-1)
+        # Residual time prediction: log(E[Δt|s]) = -log(Γ_tot) + residual
+        log_baseline = -log_total_rate  # log(1/Γ_tot)
+        residual = self.time_head(latent_state).squeeze(-1)
+        log_time = log_baseline + residual
+        self.latest_time_delta = torch.exp(log_time)
         return MZNetworkOutput(
             value=value,
             reward=[0.0 for _ in range(batch_size)],
@@ -229,23 +241,44 @@ class KMCGraphMuZeroModel(nn.Module):
     def recurrent_inference(self, latent_state: torch.Tensor, action: torch.Tensor) -> MZNetworkOutput:
         next_latent_state, reward = self._dynamics(latent_state, action)
         policy_logits, value = self._prediction(next_latent_state)
-        self.latest_time_delta = torch.exp(self.time_head(next_latent_state)).squeeze(-1)
+        # In recurrent inference (MCTS), use stored log_total_rate as baseline approximation
+        if self.latest_log_total_rate is not None:
+            log_baseline = -self.latest_log_total_rate
+        else:
+            log_baseline = torch.zeros(next_latent_state.shape[0], device=next_latent_state.device)
+        residual = self.time_head(next_latent_state).squeeze(-1)
+        log_time = log_baseline + residual
+        self.latest_time_delta = torch.exp(log_time)
         return MZNetworkOutput(value=value, reward=reward, policy_logits=policy_logits, latent_state=next_latent_state)
 
-    def predict_time_delta(self, latent_state: torch.Tensor) -> torch.Tensor:
-        """Predict the state time scale E[Δt | s] = 1 / Γ_tot.
-        The realized Poisson sample remains stochastic and is not directly predicted."""
-        return torch.exp(self.time_head(latent_state)).squeeze(-1)
+    def predict_time_delta(self, latent_state: torch.Tensor, log_total_rate: torch.Tensor | None = None) -> torch.Tensor:
+        """Predict the state time scale E[Δt | s] = 1 / Γ_tot using residual structure.
+        log(E[Δt|s]) = -log(Γ_tot) + residual."""
+        residual = self.time_head(latent_state).squeeze(-1)
+        if log_total_rate is not None:
+            log_baseline = -log_total_rate
+        elif self.latest_log_total_rate is not None:
+            log_baseline = -self.latest_log_total_rate
+        else:
+            log_baseline = torch.zeros(latent_state.shape[0], device=latent_state.device)
+        return torch.exp(log_baseline + residual)
 
-    def predict_log_time_delta(self, latent_state: torch.Tensor) -> torch.Tensor:
-        """Return raw log-space prediction for the state time scale."""
-        return self.time_head(latent_state).squeeze(-1)
+    def predict_log_time_delta(self, latent_state: torch.Tensor, log_total_rate: torch.Tensor | None = None) -> torch.Tensor:
+        """Return log-space prediction for the state time scale using residual structure."""
+        residual = self.time_head(latent_state).squeeze(-1)
+        if log_total_rate is not None:
+            log_baseline = -log_total_rate
+        elif self.latest_log_total_rate is not None:
+            log_baseline = -self.latest_log_total_rate
+        else:
+            log_baseline = torch.zeros(latent_state.shape[0], device=latent_state.device)
+        return log_baseline + residual
 
-    def _representation(self, observation: torch.Tensor) -> torch.Tensor:
-        latent_state = self.representation_network(observation)
+    def _representation(self, observation: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        latent_state, log_total_rate = self.representation_network(observation)
         if self.state_norm:
             latent_state = renormalize(latent_state)
-        return latent_state
+        return latent_state, log_total_rate
 
     def _prediction(self, latent_state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         policy_logits, value = self.prediction_network(latent_state)

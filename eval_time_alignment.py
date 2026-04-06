@@ -213,8 +213,11 @@ def run_muzero_with_time(env_cfg, model_path, device, n_episodes, max_steps, mct
             # Predict the state time scale E[Δt | s] before taking the action.
             with torch.no_grad():
                 obs_t = torch.tensor(obs, dtype=torch.float32).unsqueeze(0).to(device)
-                latent = model.initial_inference(obs_t).latent_state
-                pred_dt = max(model.predict_time_delta(latent).item(), 0.0)
+                init_out = model.initial_inference(obs_t)
+                latent = init_out.latent_state
+                log_rate = torch.tensor([np.log(max(true_total_rate, 1e-20))],
+                                        dtype=torch.float32, device=device)
+                pred_dt = max(model.predict_time_delta(latent, log_total_rate=log_rate).item(), 0.0)
 
             obs, mask, reward, done, info = env.step(action)
             real_dt = info["delta_t"]
