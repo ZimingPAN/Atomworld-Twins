@@ -215,6 +215,56 @@ def _sample_teacher_action(env: MacroKMCEnv, rng: np.random.Generator) -> Option
     return int(actions[int(rng.choice(len(actions), p=probs))])
 
 
+def _load_neural_teacher(model_path: str, env_cfg: dict, device: str = "cpu"):
+    """Load a DreamerKMCAgent as neural teacher for segment collection."""
+    from train_dreamer_standalone import DreamerKMCAgent
+    ckpt = torch.load(model_path, map_location=device, weights_only=False)
+    state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+    feature_flags = {
+        "use_topology_head": any(k.startswith("topology_head.") for k in state_dict),
+        "use_shortcut_forcing": "horizon_embed.weight" in state_dict,
+    }
+    agent = DreamerKMCAgent(
+        dim_latent=16,
+        max_vacancies=env_cfg["max_vacancies"],
+        max_defects=env_cfg["max_defects"],
+        max_shells=env_cfg["max_shells"],
+        stats_dim=env_cfg["stats_dim"],
+        lattice_size=env_cfg["lattice_size"],
+        neighbor_order=env_cfg["neighbor_order"],
+        action_space_size=env_cfg["max_vacancies"] * 8,
+        graph_hidden_size=32,
+        **feature_flags,
+    ).to(device)
+    agent.load_state_dict(state_dict)
+    agent.eval()
+    print(f"Loaded neural teacher from {model_path} (topology_head={feature_flags['use_topology_head']}, "
+          f"shortcut_forcing={feature_flags['use_shortcut_forcing']})")
+    return agent
+
+
+def _sample_neural_teacher_action(
+    env: MacroKMCEnv,
+    agent: torch.nn.Module,
+    device: str = "cpu",
+    temperature: float = 1.0,
+) -> Optional[int]:
+    """Sample action from a neural teacher (DreamerKMCAgent) with temperature softmax."""
+    obs = env.obs()
+    mask = env.action_mask()
+    with torch.no_grad():
+        obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+        mask_t = torch.tensor(mask, dtype=torch.bool, device=device).unsqueeze(0)
+        latent = agent.encode(obs_t)
+        logits = agent.forward_policy(latent, mask_t)
+        # Temperature-scaled softmax sampling instead of argmax
+        probs = torch.softmax(logits[0] / max(temperature, 1e-6), dim=-1)
+        action = int(torch.multinomial(probs, 1).item())
+    if mask[action] < 0.5:
+        return None
+    return action
+
+
 def _global_summary(env: MacroKMCEnv) -> np.ndarray:
     stats = env.env.get_system_stats().astype(np.float32)
     env.env._ensure_diffusion_rates()
@@ -362,6 +412,11 @@ def _collect_segments(
     rng: np.random.Generator,
     max_attempt_multiplier: int = 20,
     include_stepwise_path_summary: bool = True,
+    teacher_mode: str = "kmc",
+    neural_teacher: Optional[torch.nn.Module] = None,
+    neural_teacher_device: str = "cpu",
+    neural_teacher_temperature: float = 1.0,
+    neural_teacher_epsilon: float = 0.0,
 ) -> tuple[list[MacroSegmentSample], dict[str, float]]:
     def restart_env(current_env: MacroKMCEnv) -> tuple[MacroKMCEnv, np.ndarray]:
         new_env = MacroKMCEnv(copy.deepcopy(current_env.cfg))
@@ -406,7 +461,14 @@ def _collect_segments(
         done = False
         next_obs = start_obs
         for _ in range(horizon_k):
-            action = _sample_teacher_action(env, rng)
+            if teacher_mode == "neural" and neural_teacher is not None:
+                if neural_teacher_epsilon > 0 and rng.random() < neural_teacher_epsilon:
+                    action = _sample_teacher_action(env, rng)  # epsilon: KMC rate-proportional fallback
+                else:
+                    action = _sample_neural_teacher_action(env, neural_teacher, neural_teacher_device,
+                                                           temperature=neural_teacher_temperature)
+            else:
+                action = _sample_teacher_action(env, rng)
             if action is None:
                 done = True
                 break
@@ -427,15 +489,62 @@ def _collect_segments(
             continue
         candidate_set = set(candidate_positions)
         if not touched_positions.issubset(candidate_set):
-            stats["skipped_uncovered"] += 1
-            stall_attempts += 1
-            if stall_attempts >= max_stall_attempts:
-                env, obs = restart_env(env)
-                segments_since_reset = 0
-                stall_attempts = 0
+            if teacher_mode == "neural":
+                # Neural teacher paths may escape pre-built candidate set.
+                # Rebuild candidate set centered on actually touched positions.
+                box = np.asarray(env.env.dims, dtype=np.int32)
+                nn1 = np.asarray(env.env.NN1, dtype=np.int32)
+                posthoc_depth: dict[tuple[int, int, int], int] = {}
+                posthoc_frontier = set(touched_positions)
+                for pos in posthoc_frontier:
+                    posthoc_depth[pos] = 0
+                for depth in range(1, horizon_k + 1):
+                    next_frontier: set[tuple[int, int, int]] = set()
+                    for pos in posthoc_frontier:
+                        for nxt in _one_hop_neighbors(pos, nn1, box):
+                            if nxt not in posthoc_depth:
+                                posthoc_depth[nxt] = depth
+                                next_frontier.add(nxt)
+                    posthoc_frontier = next_frontier
+                    if not posthoc_frontier:
+                        break
+                merged_depth: dict[tuple[int, int, int], int] = {}
+                for pos, d in depth_map.items():
+                    merged_depth[pos] = d
+                for pos, d in posthoc_depth.items():
+                    if pos not in merged_depth or d < merged_depth[pos]:
+                        merged_depth[pos] = d
+                posthoc_seeds = np.asarray(sorted(touched_positions), dtype=np.int32)
+                all_seeds = np.concatenate([seeds, posthoc_seeds], axis=0) if seeds.size > 0 else posthoc_seeds
+
+                def rank_key_merged(pos: tuple[int, int, int]) -> tuple[int, float]:
+                    pos_arr = np.asarray(pos, dtype=np.float32)
+                    min_dist = min(np.linalg.norm(_periodic_offset(pos_arr, s.astype(np.float32), box.astype(np.float32))) for s in all_seeds)
+                    return merged_depth.get(pos, horizon_k + 1), float(min_dist)
+
+                candidate_positions = sorted(merged_depth.keys(), key=rank_key_merged)[:max_candidate_sites]
+                depth_map = merged_depth
+                seeds = all_seeds[:max_seed_vacancies]
+                candidate_set = set(candidate_positions)
+                if not touched_positions.issubset(candidate_set):
+                    stats["skipped_uncovered"] += 1
+                    obs = next_obs
+                    stall_attempts += 1
+                    if stall_attempts >= max_stall_attempts:
+                        env, obs = restart_env(env)
+                        segments_since_reset = 0
+                        stall_attempts = 0
+                    continue
             else:
-                obs = next_obs
-            continue
+                stats["skipped_uncovered"] += 1
+                stall_attempts += 1
+                if stall_attempts >= max_stall_attempts:
+                    env, obs = restart_env(env)
+                    segments_since_reset = 0
+                    stall_attempts = 0
+                else:
+                    obs = next_obs
+                continue
 
         end_vacancies = env.env.get_vacancy_array().astype(np.int32)
         end_cu = env.env.get_cu_array().astype(np.int32)
@@ -980,10 +1089,11 @@ def _evaluate(model: MacroDreamerEditModel, loader: DataLoader, device: str, max
                 horizon_k=tensors["horizon_k"],
                 current_types=tensors["current_types"],
             )
-            reward_hat, tau_mu, _tau_log_sigma = model.predict_reward_and_duration(
+            reward_hat, tau_mu, _tau_log_sigma, gate_logit = model.predict_reward_and_duration(
                 global_latent, next_pred, path_latent, tensors["global_summary"], tensors["horizon_k"]
             )
-            reward_pred.extend(reward_hat.cpu().numpy().tolist())
+            gated_reward = reward_hat * torch.sigmoid(gate_logit)
+            reward_pred.extend(gated_reward.cpu().numpy().tolist())
             reward_true.extend(tensors["reward_sum"].cpu().numpy().tolist())
             tau_pred.extend(torch.exp(tau_mu).cpu().numpy().tolist())
             tau_true.extend(tensors["tau_exp"].cpu().numpy().tolist())
@@ -1131,6 +1241,7 @@ def _train_epoch(
     mask_sparsity_weight: float = 0.0,
     count_loss_weight: float = 0.1,
     detach_proj_encoder: bool = False,
+    reward_magnitude_weight: float = 1.0,
 ) -> dict[str, float]:
     model.train()
     aux_scale = _scheduled_aux_scale(epoch, total_epochs) if aux_anneal else 1.0
@@ -1204,7 +1315,7 @@ def _train_epoch(
             horizon_k=tensors["horizon_k"],
             current_types=tensors["current_types"],
         )
-        reward_hat, tau_mu, tau_log_sigma = model.predict_reward_and_duration(
+        reward_hat, tau_mu, tau_log_sigma, gate_logit = model.predict_reward_and_duration(
             global_latent,
             next_pred,
             post_c,
@@ -1212,7 +1323,7 @@ def _train_epoch(
             tensors["horizon_k"],
             detach_duration_inputs=True,
         )
-        reward_hat_prior, tau_mu_prior, tau_log_sigma_prior = model.predict_reward_and_duration(
+        reward_hat_prior, tau_mu_prior, tau_log_sigma_prior, gate_logit_prior = model.predict_reward_and_duration(
             global_latent,
             next_pred_prior,
             prior_c,
@@ -1320,7 +1431,17 @@ def _train_epoch(
         prior_edit_loss = prior_edit["mask"] + 0.1 * prior_edit["count"] + (0.5 * prior_proj_mask_loss if compute_proj else 0.0) + prior_edit["type"]
 
         tau_loss = lognormal_nll(tensors["tau_exp"], tau_mu, tau_log_sigma).mean()
-        reward_loss = F.smooth_l1_loss(reward_hat, tensors["reward_sum"])
+        # Gate-aware reward loss: binary gate classifies zero vs nonzero dE,
+        # then magnitude loss only on nonzero-dE segments
+        reward_nonzero_target = (tensors["reward_sum"].abs() > 1e-6).float()
+        gate_loss = F.binary_cross_entropy_with_logits(gate_logit, reward_nonzero_target)
+        nonzero_mask = reward_nonzero_target > 0.5
+        if nonzero_mask.any():
+            # Decoupled: train magnitude head directly on raw reward_hat (gate only applied at inference)
+            reward_magnitude_loss = F.smooth_l1_loss(reward_hat[nonzero_mask], tensors["reward_sum"][nonzero_mask])
+        else:
+            reward_magnitude_loss = torch.tensor(0.0, device=device)
+        reward_loss = gate_loss + reward_magnitude_weight * reward_magnitude_loss
         latent_loss = F.smooth_l1_loss(next_pred, next_global)
         if compute_proj:
             proj_state_loss = _projected_state_alignment_loss(
@@ -1347,7 +1468,13 @@ def _train_epoch(
         prior_latent_loss = F.smooth_l1_loss(next_pred_prior, next_global) + 0.5 * prior_proj_state_loss
         path_loss = kl_divergence_diag_gaussian(post_mu, post_logvar, prior_mu, prior_logvar).mean()
         prior_tau_loss = lognormal_nll(tensors["tau_exp"], tau_mu_prior, tau_log_sigma_prior).mean()
-        prior_reward_loss = F.smooth_l1_loss(reward_hat_prior, tensors["reward_sum"])
+        prior_gate_loss = F.binary_cross_entropy_with_logits(gate_logit_prior, reward_nonzero_target)
+        if nonzero_mask.any():
+            # Decoupled: train prior magnitude head directly on raw reward_hat_prior
+            prior_reward_magnitude_loss = F.smooth_l1_loss(reward_hat_prior[nonzero_mask], tensors["reward_sum"][nonzero_mask])
+        else:
+            prior_reward_magnitude_loss = torch.tensor(0.0, device=device)
+        prior_reward_loss = prior_gate_loss + reward_magnitude_weight * prior_reward_magnitude_loss
         if tau_supervision_mode == "posterior_only":
             combined_tau_loss = tau_loss
             effective_tau_post_scale = 1.0
@@ -1428,6 +1555,13 @@ def _initialize_output_heads(model: MacroDreamerEditModel, train_samples: list[M
         model.type_head.bias.zero_()
         model.reward_head[-1].weight.zero_()
         model.reward_head[-1].bias.fill_(reward_mean)
+        # Initialize gate bias to dataset zero/nonzero ratio (log-odds)
+        nonzero_frac = float(np.mean([abs(s.reward_sum) > 1e-6 for s in train_samples]))
+        nonzero_frac = min(max(nonzero_frac, 0.01), 0.99)  # clamp for numerical stability
+        gate_bias = math.log(nonzero_frac) - math.log(1.0 - nonzero_frac)
+        model.reward_gate_head[-1].weight.zero_()
+        model.reward_gate_head[-1].bias.fill_(gate_bias)
+        print(f"  Gate init: nonzero_frac={nonzero_frac:.3f}, gate_bias={gate_bias:.3f}")
         model.duration_head[-1].weight.zero_()
         model.duration_head[-1].bias[0] = tau_residual_mean
         model.duration_head[-1].bias[1] = float(np.log(tau_residual_std))
@@ -1481,6 +1615,21 @@ def parse_args() -> argparse.Namespace:
                         help="Training loss weight for proj_state_loss (default: 0.5). Higher values strengthen encoder projection consistency.")
     parser.add_argument("--proj_l1_score_weight", type=float, default=80.0,
                         help="Weight for proj_global_l1 in the selection score formula (default: 80.0). Lower values reduce proj_l1 dominance in model selection.")
+    parser.add_argument("--reward_weight", type=float, default=0.5,
+                        help="Training loss weight for reward prediction (default: 0.5). Higher values strengthen energy/reward prediction.")
+    parser.add_argument("--reward_magnitude_weight", type=float, default=1.0,
+                        help="Extra multiplier for reward magnitude loss relative to gate loss (default: 1.0). "
+                             "Higher values prioritise predicting correct dE amplitude over zero/nonzero classification.")
+    parser.add_argument("--teacher_mode", type=str, default="kmc", choices=["kmc", "neural"],
+                        help="Teacher action sampling mode: 'kmc' = rate-proportional, 'neural' = learned policy.")
+    parser.add_argument("--neural_teacher_path", type=str, default=None,
+                        help="Path to DreamerKMCAgent checkpoint for neural teacher mode.")
+    parser.add_argument("--neural_teacher_temperature", type=float, default=1.0,
+                        help="Temperature for neural teacher softmax sampling (higher = more random).")
+    parser.add_argument("--neural_teacher_epsilon", type=float, default=0.0,
+                        help="Epsilon-greedy: probability of using KMC rate-proportional sampling instead of neural teacher.")
+    parser.add_argument("--gate_warmup_epochs", type=int, default=0,
+                        help="Number of initial epochs where only gate loss is trained (reward_magnitude_weight=0).")
     parser.add_argument("--eval_freq", type=int, default=5)
     parser.add_argument("--save_freq", type=int, default=10)
     parser.add_argument("--num_workers", type=int, default=0)
@@ -1508,6 +1657,9 @@ def _dataset_signature(args: argparse.Namespace) -> dict[str, object]:
         "train_segments": int(args.train_segments),
         "val_segments": int(args.val_segments),
         "teacher_path_summary_mode": str(args.teacher_path_summary_mode),
+        "teacher_mode": str(getattr(args, "teacher_mode", "kmc")),
+        "neural_teacher_temperature": float(getattr(args, "neural_teacher_temperature", 1.0)),
+        "neural_teacher_epsilon": float(getattr(args, "neural_teacher_epsilon", 0.0)),
     }
 
 
@@ -1554,6 +1706,13 @@ def main() -> None:
     else:
         payload = None
     if payload is None:
+        # Load neural teacher if requested
+        neural_teacher = None
+        if args.teacher_mode == "neural":
+            if not args.neural_teacher_path:
+                raise ValueError("--neural_teacher_path is required when --teacher_mode=neural")
+            neural_teacher = _load_neural_teacher(args.neural_teacher_path, env_cfg, args.device)
+
         train_env = MacroKMCEnv(env_cfg)
         val_env = MacroKMCEnv(env_cfg)
         train_rng = np.random.default_rng(args.seed)
@@ -1566,6 +1725,11 @@ def main() -> None:
             max_candidate_sites=args.max_candidate_sites,
             rng=train_rng,
             include_stepwise_path_summary=include_stepwise_path_summary,
+            teacher_mode=args.teacher_mode,
+            neural_teacher=neural_teacher,
+            neural_teacher_device=args.device,
+            neural_teacher_temperature=args.neural_teacher_temperature,
+            neural_teacher_epsilon=args.neural_teacher_epsilon,
         )
         val_samples, val_stats = _collect_segments(
             env=val_env,
@@ -1575,6 +1739,11 @@ def main() -> None:
             max_candidate_sites=args.max_candidate_sites,
             rng=val_rng,
             include_stepwise_path_summary=include_stepwise_path_summary,
+            teacher_mode=args.teacher_mode,
+            neural_teacher=neural_teacher,
+            neural_teacher_device=args.device,
+            neural_teacher_temperature=args.neural_teacher_temperature,
+            neural_teacher_epsilon=args.neural_teacher_epsilon,
         )
         dataset_stats = {"train": train_stats, "val": val_stats}
         torch.save(
@@ -1614,7 +1783,7 @@ def main() -> None:
         "type": 1.0,
         "pair": 0.0,
         "tau": 1.0,
-        "reward": 0.5,
+        "reward": args.reward_weight,
         "latent": 0.5,
         "proj": args.proj_weight,
         "path": 0.05,
@@ -1627,8 +1796,15 @@ def main() -> None:
     if args.resume and Path(args.resume).exists():
         ckpt = torch.load(args.resume, map_location=args.device, weights_only=False)
         _validate_resume_args(args, ckpt.get("args", {}))
-        model.load_state_dict(ckpt["model"])
-        optimizer.load_state_dict(ckpt["optimizer"])
+        missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
+        if missing:
+            print(f"Resume: new parameters initialized from scratch: {missing}")
+        if unexpected:
+            print(f"Resume: unexpected keys ignored: {unexpected}")
+        try:
+            optimizer.load_state_dict(ckpt["optimizer"])
+        except ValueError as e:
+            print(f"Resume: optimizer state incompatible ({e}), reinitializing optimizer (weights loaded)")
         start_epoch = int(ckpt["epoch"]) + 1
         if not args.eval_only:
             allow_checkpoint_best_score_fallback = Path(args.resume).resolve().parent == save_dir.resolve()
@@ -1671,6 +1847,7 @@ def main() -> None:
             mask_sparsity_weight=args.mask_sparsity_weight,
             count_loss_weight=args.count_loss_weight,
             detach_proj_encoder=args.detach_proj_encoder,
+            reward_magnitude_weight=args.reward_magnitude_weight if epoch > args.gate_warmup_epochs else 0.0,
         )
         elapsed = time.time() - t0
         train_msg = (

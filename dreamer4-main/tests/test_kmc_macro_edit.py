@@ -335,7 +335,7 @@ def test_predict_reward_and_duration_uses_physical_baseline_when_residual_is_zer
 
     global_summary = torch.zeros((1, 16), dtype=torch.float32)
     global_summary[0, 10] = math.log(100.0)
-    _reward, tau_mu, _tau_log_sigma = model.predict_reward_and_duration(
+    _reward, tau_mu, _tau_log_sigma, _gate_logit = model.predict_reward_and_duration(
         global_latent=torch.zeros((1, model.global_latent_dim), dtype=torch.float32),
         predicted_next_global=torch.zeros((1, model.global_latent_dim), dtype=torch.float32),
         path_latent=torch.zeros((1, model.path_latent_dim), dtype=torch.float32),
@@ -370,7 +370,7 @@ def test_detached_duration_inputs_block_backbone_gradients():
     global_latent = torch.randn((1, model.global_latent_dim), dtype=torch.float32, requires_grad=True)
     next_global = torch.randn((1, model.global_latent_dim), dtype=torch.float32, requires_grad=True)
     path_latent = torch.randn((1, model.path_latent_dim), dtype=torch.float32, requires_grad=True)
-    _reward, tau_mu, tau_log_sigma = model.predict_reward_and_duration(
+    _reward, tau_mu, tau_log_sigma, _gate_logit = model.predict_reward_and_duration(
         global_latent=global_latent,
         predicted_next_global=next_global,
         path_latent=path_latent,
@@ -654,7 +654,7 @@ def test_evaluate_uses_raw_type_logits_for_type_metrics(monkeypatch):
         def predict_reward_and_duration(self, global_latent, predicted_next_global, path_latent, global_summary, horizon_k):
             batch = global_latent.shape[0]
             zeros = torch.zeros((batch,), dtype=torch.float32, device=global_latent.device)
-            return zeros, zeros, zeros
+            return zeros, zeros, zeros, zeros
 
     def fake_project_types_by_inventory(*, current_types, change_logits, type_logits, node_mask, positions, box_dims, horizon_k, max_changed_sites):
         batch = current_types.shape[0]

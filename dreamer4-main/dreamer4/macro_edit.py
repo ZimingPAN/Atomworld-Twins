@@ -308,6 +308,13 @@ class MacroDreamerEditModel(nn.Module):
             nn.SiLU(),
             nn.Linear(256, 2),
         )
+        # Binary gate: predicts P(dE != 0) to separate zero-dE from nonzero-dE segments
+        self.reward_gate_head = nn.Sequential(
+            nn.LayerNorm(reward_time_in),
+            nn.Linear(reward_time_in, 128),
+            nn.SiLU(),
+            nn.Linear(128, 1),
+        )
         with torch.no_grad():
             # The duration head predicts a residual around the physics baseline k / Gamma_tot(start).
             self.duration_head[-1].bias[0] = 0.0
@@ -407,10 +414,11 @@ class MacroDreamerEditModel(nn.Module):
         horizon_k: torch.Tensor,
         *,
         detach_duration_inputs: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         k_emb = self._k_embedding(horizon_k)
         reward_hidden = torch.cat([global_latent, predicted_next_global, path_latent, global_summary, k_emb], dim=-1)
         reward = self.reward_head(reward_hidden).squeeze(-1)
+        gate_logit = self.reward_gate_head(reward_hidden).squeeze(-1)
 
         if detach_duration_inputs:
             duration_inputs = [
@@ -425,7 +433,7 @@ class MacroDreamerEditModel(nn.Module):
         duration_hidden = torch.cat(duration_inputs, dim=-1)
         residual_mu, log_sigma = self.duration_head(duration_hidden).chunk(2, dim=-1)
         mu = macro_duration_baseline_log_tau(global_summary, horizon_k).unsqueeze(-1) + residual_mu
-        return reward, mu.squeeze(-1), log_sigma.squeeze(-1).clamp(min=-6.0, max=2.0)
+        return reward, mu.squeeze(-1), log_sigma.squeeze(-1).clamp(min=-6.0, max=2.0), gate_logit
 
 
 def _assignment_slots(quotas: Iterable[int]) -> list[int]:

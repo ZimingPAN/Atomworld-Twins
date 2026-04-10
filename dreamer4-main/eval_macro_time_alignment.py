@@ -79,7 +79,11 @@ def _build_model(ckpt: dict[str, object], device: str) -> mod.MacroDreamerEditMo
         teacher_path_summary_dim=mod.teacher_path_summary_dim(int(args["segment_k"]), include_stepwise_features=include_stepwise_path_summary),
         max_macro_k=max(int(args["segment_k"]), 16),
     ).to(device)
-    model.load_state_dict(ckpt["model"])
+    missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
+    if missing:
+        print(f"Eval: missing keys initialized from scratch: {missing}")
+    if unexpected:
+        print(f"Eval: unexpected keys ignored: {unexpected}")
     model.eval()
     return model
 
@@ -137,14 +141,15 @@ def main() -> None:
             )
             path_latent = model.sample_path_latent(prior_mu, prior_logvar, deterministic=True)
             next_pred = model.predict_next_global(global_latent, path_latent, tensors["horizon_k"])
-            reward_hat, tau_mu, _tau_log_sigma = model.predict_reward_and_duration(
+            reward_hat, tau_mu, _tau_log_sigma, gate_logit = model.predict_reward_and_duration(
                 global_latent,
                 next_pred,
                 path_latent,
                 tensors["global_summary"],
                 tensors["horizon_k"],
             )
-            batch_pred_reward = reward_hat.detach().cpu().numpy()
+            gated_reward = reward_hat * torch.sigmoid(gate_logit)
+            batch_pred_reward = gated_reward.detach().cpu().numpy()
             batch_pred_tau = torch.exp(tau_mu).detach().cpu().numpy()
 
             for sample, item_pred_reward, item_pred_tau in zip(batch, batch_pred_reward, batch_pred_tau):

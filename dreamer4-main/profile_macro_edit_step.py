@@ -114,10 +114,10 @@ def main() -> None:
         current_types=tensors["current_types"],
     )
     type_logits = model.apply_type_copy_bias(raw_type_logits, tensors["current_types"])
-    reward_hat, tau_mu, tau_log_sigma = model.predict_reward_and_duration(
+    reward_hat, tau_mu, tau_log_sigma, _gate_logit = model.predict_reward_and_duration(
         global_latent, next_pred, post_c, tensors["global_summary"], tensors["horizon_k"]
     )
-    reward_hat_prior, tau_mu_prior, tau_log_sigma_prior = model.predict_reward_and_duration(
+    reward_hat_prior, tau_mu_prior, tau_log_sigma_prior, _gate_logit_prior = model.predict_reward_and_duration(
         global_latent, next_pred_prior, prior_c, tensors["global_summary"], tensors["horizon_k"]
     )
     _sync()
