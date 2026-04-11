@@ -72,7 +72,7 @@ class KMCGraphRepresentationNetwork(nn.Module):
         stats_f = stats.to(device=device, dtype=torch.float32)
         combined = torch.cat([flat_latents, stats_f], dim=-1)
         latent = self.project(combined)
-        log_total_rate = stats_f[:, 3]  # log(Γ_tot) injected by env wrapper
+        log_total_rate = stats_f[:, 3]  # log(Γ_tot) injected in _obs()
         return latent, log_total_rate
 
 
@@ -191,15 +191,13 @@ class KMCGraphMuZeroModel(nn.Module):
             last_linear_layer_init_zero=last_linear_layer_init_zero,
         )
         self.latest_time_delta: torch.Tensor | None = None
-        self.latest_log_total_rate: torch.Tensor | None = None
 
-        # Zero-init time_head for residual mode:
-        # log(E[Δt|s]) = -log(Γ_tot) + residual, where residual starts at 0
-        # so initial prediction = 1/Γ_tot (physically correct baseline)
+        # Init time_head bias to -10.0 (AGENTS.md §6 rule 4):
+        # log(E[Δt]) ≈ log(3e-5) ≈ -10.4, so bias=-10 gives good starting point
         with torch.no_grad():
             for m in reversed(list(self.time_head.modules())):
                 if isinstance(m, nn.Linear) and m.out_features == 1:
-                    nn.init.constant_(m.bias, 0.0)
+                    nn.init.constant_(m.bias, -10.0)
                     nn.init.zeros_(m.weight)
                     break
 
@@ -227,12 +225,8 @@ class KMCGraphMuZeroModel(nn.Module):
         latent_state, log_total_rate = self._representation(obs)
         self.latest_log_total_rate = log_total_rate
         policy_logits, value = self._prediction(latent_state)
-        # Residual time prediction with gradient isolation:
-        # log(E[Δt|s]) = -log(Γ_tot) + residual(latent.detach())
-        log_baseline = -log_total_rate  # log(1/Γ_tot)
-        residual = self.time_head(latent_state.detach()).squeeze(-1)
-        log_time = log_baseline + residual
-        self.latest_time_delta = torch.exp(log_time)
+        # Analytical time prediction: E[Δt] = 1/Γ_tot = exp(-log_total_rate)
+        self.latest_time_delta = torch.exp(-log_total_rate)
         return MZNetworkOutput(
             value=value,
             reward=[0.0 for _ in range(batch_size)],
@@ -243,35 +237,27 @@ class KMCGraphMuZeroModel(nn.Module):
     def recurrent_inference(self, latent_state: torch.Tensor, action: torch.Tensor) -> MZNetworkOutput:
         next_latent_state, reward = self._dynamics(latent_state, action)
         policy_logits, value = self._prediction(next_latent_state)
-        # Residual time prediction using stored log_total_rate from initial_inference
-        if self.latest_log_total_rate is not None:
-            log_baseline = -self.latest_log_total_rate
-        else:
-            log_baseline = torch.zeros(next_latent_state.shape[0], device=next_latent_state.device)
-        residual = self.time_head(next_latent_state.detach()).squeeze(-1)
-        log_time = log_baseline + residual
-        self.latest_time_delta = torch.exp(log_time)
+        # During MCTS recurrent steps, keep latest_time_delta from initial_inference
+        # (dynamics model doesn't predict Γ_tot changes, which is fine for shallow MCTS)
         return MZNetworkOutput(value=value, reward=reward, policy_logits=policy_logits, latent_state=next_latent_state)
 
     def predict_time_delta(self, latent_state: torch.Tensor, log_total_rate: torch.Tensor | None = None) -> torch.Tensor:
-        """Predict E[Δt | s] using residual mode: exp(-log(Γ_tot) + residual)."""
-        residual = self.time_head(latent_state.detach()).squeeze(-1)
+        """Analytical time prediction: E[Δt] = 1/Γ_tot = exp(-log_total_rate)."""
         if log_total_rate is not None:
-            log_time = -log_total_rate + residual
-        elif self.latest_log_total_rate is not None:
-            log_time = -self.latest_log_total_rate + residual
-        else:
-            log_time = residual
+            return torch.exp(-log_total_rate)
+        if hasattr(self, 'latest_log_total_rate') and self.latest_log_total_rate is not None:
+            return torch.exp(-self.latest_log_total_rate)
+        # Fallback: use time_head
+        log_time = self.time_head(latent_state.detach()).squeeze(-1)
         return torch.exp(log_time)
 
     def predict_log_time_delta(self, latent_state: torch.Tensor, log_total_rate: torch.Tensor | None = None) -> torch.Tensor:
-        """Return log-space prediction: -log(Γ_tot) + residual."""
-        residual = self.time_head(latent_state.detach()).squeeze(-1)
+        """Analytical log-time: log(E[Δt]) = -log(Γ_tot)."""
         if log_total_rate is not None:
-            return -log_total_rate + residual
-        elif self.latest_log_total_rate is not None:
-            return -self.latest_log_total_rate + residual
-        return residual
+            return -log_total_rate
+        if hasattr(self, 'latest_log_total_rate') and self.latest_log_total_rate is not None:
+            return -self.latest_log_total_rate
+        return self.time_head(latent_state.detach()).squeeze(-1)
 
     def _representation(self, observation: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         latent_state, log_total_rate = self.representation_network(observation)

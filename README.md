@@ -1,459 +1,240 @@
-<div align="center">
+# AtomWorld-Twins
 
-# 🐝 SwarmEcosystem
+AtomWorld-Twins is a paper-facing repository for a teacher-student Dreamer macro world model for atomic KMC. The core claim is simple: KMC is a continuous-time Markov chain, and if we want to keep only sparse key states while preserving physical time, the problem should be reformulated as a Semi-Markov world-modeling problem.
 
-**World Model + GNN for Physics-Aware Kinetic Monte Carlo**
+AtomWorld-Twins 面向一篇聚焦 teacher-student Dreamer macro world model 的论文。核心主张很明确：KMC 本质上是连续时间马尔可夫链；如果希望只保留少量关键状态点同时保持时间准确，就应该把问题重新表述为一个 Semi-Markov world model 问题。
 
-将世界模型与图神经网络融合，实现物理感知的动力学蒙特卡洛模拟
+This README intentionally focuses only on the AtomWorld-Twins story. Legacy directories or earlier exploratory work may still exist in the repository, but they are out of scope for this paper-oriented overview.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
+本 README 有意只服务于 AtomWorld-Twins 这篇文章。仓库中如果仍保留历史实验目录或更早的探索性工作，它们都不属于本文的主线范围。
 
-[English](#english) | [中文](#中文)
+## English
 
-</div>
+### Problem
 
----
+Traditional KMC provides exact micro-event sampling because transition selection and time advance are governed by the same physical rates:
 
-<a name="english"></a>
+- event selection depends on local rates
+- residence time depends on the total rate
 
-## 🌍 English
+This makes KMC a continuous-time Markov chain rather than an ordinary fixed-step simulator. The difficulty is that long-horizon atomistic rollouts are expensive. If we want to observe only sparse key states but still keep the time axis correct, we can no longer stay in the original event-by-event CTMC view. The natural reformulation is a Semi-Markov process: state jump plus explicit duration.
 
-### Overview
+### Why A World Model Is Needed
 
-SwarmEcosystem integrates **Model-Based Reinforcement Learning** (Gumbel MuZero & DreamerV4) with **Graph Neural Networks** to solve atomic-scale Kinetic Monte Carlo (KMC) simulations. By learning physics dynamics in latent space, we eliminate the variance explosion problem inherent in importance sampling approaches.
+Once we stop simulating every vacancy-hop explicitly, we also lose the direct analytic guidance that standard KMC gives us at each micro step. The model must then learn the atomistic physical world at the macro-step level:
 
-### Motivation
+- which sparse lattice edits are physically reachable
+- what macro state follows the current key state
+- how much accumulated physical time the macro transition should take
 
-Traditional RL-KMC approaches (e.g., PPO + importance sampling) suffer from a fundamental issue: cumulative importance weights $w(\tau)$ exhibit **exponential variance growth** with trajectory length. This makes physical time estimation unreliable.
+This is why AtomWorld-Twins is framed as a world model rather than a plain predictor.
 
-Our approach replaces post-hoc importance corrections with **world models** that natively learn the Poisson process dynamics of KMC in latent space, unifying spatial configuration evolution and temporal progression.
+### Method
 
-### Architecture
+AtomWorld-Twins uses a teacher-student Dreamer macro world model.
 
-```
-┌──────────────────────────────────────────────────┐
-│                 KMC Environment                   │
-│   BCC Lattice (Fe-Cu alloy + Vacancies)          │
-└──────────────┬───────────────────────────────────┘
-               │ Graph Observation (16-shell defect graph)
-               ▼
-┌──────────────────────────────────────────────────┐
-│            GNN Encoder (Message Passing)          │
-│   Node: 3D offset to agent + defect type         │
-│   Edge: offset between defects                   │
-└──────────────┬───────────────────────────────────┘
-               │ Latent State
-               ▼
-┌──────────────────────────────────────────────────┐
-│            World Model (Latent Dynamics)          │
-│                                                   │
-│  ┌─────────────┐  ┌─────────────┐                │
-│  │ Gumbel MuZero│  │ DreamerV4   │                │
-│  │  + MCTS      │  │ + Imagination│               │
-│  └──────┬──────┘  └──────┬──────┘                │
-│         │                │                        │
-│  ┌──────┴────────────────┴──────┐                │
-│  │     Physics-Aware Heads      │                │
-│  │  • Policy  • Value  • Reward │                │
-│  │  • Time (Δt)  • Energy (ΔE) │                │
-│  └──────────────────────────────┘                │
-└──────────────────────────────────────────────────┘
-```
+Teacher:
 
-### Dreamer Macro Edit World Model
+- The teacher is the atomistic KMC simulator itself.
+- Starting from state X_t, it rolls out a fixed-k micro-event segment.
+- It provides the terminal state X_t+k, the accumulated expected time, the realized time, and a path summary extracted from the micro trajectory.
 
-Beyond per-event world models, we introduce a **Reachability-Constrained Semi-Markov Lattice Edit World Model** built on DreamerV4. Instead of rolling out one KMC event at a time, this model uses the atomistic KMC simulator as a teacher to learn **macro-step predictions** over a fixed number of micro-events (fixed-k).
+Student:
 
-#### Teacher-Student Framework
+- The student is a Dreamer-style macro world model operating in latent space.
+- It encodes the current local patch and global summary into a latent state.
+- It uses posterior and prior path latents to separate training-time identifiability from test-time generation.
+- It predicts the next macro latent state, sparse reachable lattice edits, and macro duration.
 
-The macro edit world model adopts a **Teacher-Student** paradigm:
+### Physical Constraints
 
-**Teacher** — the existing atomistic KMC simulator. Given current state $X_t$, the teacher rolls out k micro-events and produces:
-1. Terminal state $X_{t+k}$
-2. Accumulated expected time $\tau_{\text{exp}}$
-3. Realized accumulated time $\tau_{\text{real}}$
-4. Micro-event path $\text{path}_t$
-5. Teacher path summary extracted from $\text{path}_t$
+The model is designed around three hard constraints.
 
-The first version does **not** train a separate neural teacher — the simulator itself serves as the ground-truth teacher.
+- Inventory conservation: atom and vacancy counts must remain valid.
+- Local reachability: predicted edits must lie inside the k-step reachable candidate set.
+- Continuous-time consistency: duration supervision uses path-conditioned accumulated expected time rather than arbitrary endpoint regression.
 
-**Student** — a Dreamer macro world model with 5 components:
-1. **State Encoder**: encodes active patch + global summary into latent $z_t$
-2. **Path Posterior**: infers path latent $c_{\text{post}}$ from teacher path summary (training only)
-3. **Path Prior**: predicts path latent $c_{\text{prior}}$ from $z_t$ and global summary (inference only)
-4. **Macro Dynamics**: predicts terminal latent $\hat{z}_{t+k}$ from $z_t$, $c$, and fixed-k
-5. **Edit-Duration Decoder**: decodes reachable sparse edits and $\tau_{\text{exp}}$ from $z_t$, $\hat{z}_{t+k}$, and candidate set
+This is the reason the output is defined as reachability-constrained sparse lattice edits instead of unrestricted dense reconstruction.
 
-**Why two path representations (Posterior & Prior)?**
-During training, the posterior uses the real teacher path for high identifiability. During inference, the prior must generate path latents without access to future information. A KL divergence or distillation loss forces the prior to approximate the posterior, so path information aids training without leaking into inference.
+### Repository Scope
 
-#### Core Idea
+The paper-oriented workflow is centered on the following components:
 
-A single macro step directly predicts:
-1. Which candidate lattice sites will change
-2. The final atom/vacancy type at each changed site
-3. The accumulated expected physical time $\tau_{\text{exp}}$ over the macro step
-4. The terminal latent state in Dreamer's latent space
-
-#### Why Reachability Matters
-
-Conservation alone (atom counts unchanged) is necessary but not sufficient. The model must also ensure that predicted edits correspond to states **physically reachable** within k legal vacancy-hop events. We enforce this via a **reachable candidate set** $C_t^{(k)}$ that restricts the edit output space to sites actually accessible from the current configuration.
-
-#### Student Architecture
-
-The student world model retains Dreamer's core structure (latent state, prior/posterior, imagination rollout) while adding macro-edit capabilities:
-
-```
-┌─────────────────────────────────────────────────────────┐
-│              Dreamer Macro Edit World Model              │
-│                                                          │
-│  ┌────────────────┐   ┌──────────────────────────────┐  │
-│  │ State Encoder   │   │ Path Posterior (train only)  │  │
-│  │ Active Patch +  │   │ q(c | z_t, path, X_{t+k})   │  │
-│  │ Global Summary  │   └──────────────┬───────────────┘  │
-│  └───────┬────────┘                   │                  │
-│          │ z_t                 ┌──────┴───────┐          │
-│          ▼                    │ Path Prior    │          │
-│  ┌───────────────────┐        │ p(c | z_t, k) │          │
-│  │ Macro Dynamics    │◄───────┘ (inference)   │          │
-│  │ z_{t+k} = G(z,c,k)│        └──────────────┘          │
-│  └───────┬───────────┘                                   │
-│          ▼                                               │
-│  ┌───────────────────┐  ┌────────────────────────────┐  │
-│  │ Edit Decoder      │  │ Duration Head              │  │
-│  │ Mask + Type logits│  │ LogNormal(μ_τ, σ_τ)       │  │
-│  └───────┬───────────┘  └────────────────────────────┘  │
-│          ▼                                               │
-│  ┌───────────────────────────────────────────────────┐  │
-│  │ Reachability + Conservation Projection            │  │
-│  │ • Only edit within C_t^(k)                        │  │
-│  │ • Inventory conservation                          │  │
-│  │ • Edit scale bounded by fixed-k                   │  │
-│  └───────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
-```
-
-#### Physical Constraints
-
-Three non-negotiable constraints are enforced simultaneously:
-- **Inventory conservation**: total counts of each atom/vacancy type are preserved
-- **Local reachability**: edits must lie within the reachable candidate set $C_t^{(k)}$ derived from legal vacancy-hop sequences
-- **Continuous-time consistency**: time labels use path-conditioned accumulated expected time $\tau_{\text{exp}} = \sum_{j=0}^{k-1} 1/\Gamma_{\text{tot}}(s_{t+j})$, not arbitrary endpoint regression
-
-#### Training Strategy
-
-- **Phase 0**: Offline statistics — verify task learnability (sparsity, time distributions, candidate set sizes)
-- **Phase 1**: Fixed-k macro probe with teacher path summary and candidate set constraints
-- **Phase 2**: Projected training with conservation and reachability violation driven to zero
-- **Phase 3**: Dreamer rollout validation — continuous macro-step imagination via prior
-- **Phase 4**: Multi-k extension ($k \in \{2, 4, 8, 16\}$)
-- **Phase 5**: Optional learned micro teacher distillation
-
-### Key Innovations
-
-- **Physics-Time Discount**: $\gamma = \exp(-\Delta t / \tau)$ replaces fixed step discount, giving agents native temporal awareness
-- **Log-Space Time Prediction**: Time head predicts $\log(\Delta t)$ via regression, correctly modeling the Poisson process ($\Delta t \sim \text{Exp}(\Gamma_{\text{tot}})$)
-- **Gradient Isolation**: Two-pass backward prevents time head's large gradients from starving policy learning
-- **State-Only Time Prediction**: $\Delta t$ depends on $\Gamma_{\text{tot}}$ (state property), not on action choice — enforcing KMC physics
-- **Dreamer Macro Edit World Model**: A reachability-constrained semi-Markov lattice edit world model that predicts sparse lattice edits and accumulated physical time over fixed-k macro steps, bypassing per-event rollout entirely
-
-### Project Structure
-
-```
-SwarmEcosystem/
-├── LightZero-main/              # Gumbel MuZero framework
-│   ├── lzero/model/             # MuZero + GNN model
-│   └── zoo/kmc/                 # KMC training scripts
-├── dreamer4-main/               # DreamerV4 framework
-│   ├── dreamer4/                # Core Dreamer modules
-│   │   └── macro_edit.py        # Macro edit world model
-│   ├── train_dreamer_standalone.py
-│   └── train_dreamer_macro_edit.py  # Macro edit training
-├── RLKMC-MASSIVE-main/          # KMC environment + PPO baseline
-│   └── RL4KMC/                  # Environment & graph encoding
-├── doc/                         # Reference papers & reports
-│   └── idea.md                  # Macro edit design document
-├── eval_all_models.py           # Model evaluation
-├── eval_time_alignment.py       # Physics time alignment eval
-└── results/                     # Training results
+```text
+AtomWorld-Twins/
+├── dreamer4-main/
+│   ├── train_dreamer_macro_edit.py
+│   ├── eval_macro_time_alignment.py
+│   ├── run_v24_v25_train.sh
+│   └── run_v24_v25_eval.sh
+├── RLKMC-MASSIVE-main/
+├── doc/
+│   ├── AtomWorld-Twins.md
+│   ├── AtomWorld-Twins_KMC_World_Model.pdf
+│   └── idea.md
+└── results/
 ```
 
 ### Quick Start
 
-#### Requirements
+Environment:
 
 - Python 3.10+
-- PyTorch 2.0+ (CUDA 12.1)
-- torch_geometric
-- numpy, scipy
+- PyTorch 2.0+
+- A working environment for the Dreamer and RLKMC dependencies already included in this repository setup
 
-#### Training
+Train the macro world model:
 
 ```bash
-# Train Gumbel MuZero + GNN
-cd LightZero-main
-python zoo/kmc/train_muzero_standalone.py \
-  --lattice_size 40 40 40 --cu_density 0.0134 --v_density 0.0002 \
-  --max_shells 16 --neighbor_order 2NN \
-  --total_iterations 500 --use_physics_discount
-
-# Train DreamerV4 + GNN
-cd dreamer4-main
-python train_dreamer_standalone.py \
-  --lattice_size 40 40 40 --cu_density 0.0134 --v_density 0.0002 \
-  --max_shells 16 --neighbor_order 2NN \
-  --total_iterations 500
-
-# Train Dreamer Macro Edit World Model (fixed-k offline)
 cd dreamer4-main
 python train_dreamer_macro_edit.py \
-  --macro_k 4 --use_teacher_path_summary \
-  --use_reachability_constraint
+  --save_dir results/atomworld_twins_v1 \
+  --dataset_cache results/atomworld_twins_v1/segments.pt \
+  --segment_k 4 \
+  --teacher_path_summary_mode stepwise \
+  --tau_supervision_mode prior_main \
+  --train_segments 2000 \
+  --val_segments 400 \
+  --max_candidate_sites 128 \
+  --epochs 80 \
+  --device cuda
 ```
 
-#### Evaluation
+Evaluate time alignment against teacher segments:
 
 ```bash
-# Compare all models (PPO, MuZero, Dreamer)
-python eval_all_models.py
-
-# Physics time alignment evaluation
-python eval_time_alignment.py \
-  --muzero_ckpt path/to/muzero.pt \
-  --dreamer_ckpt path/to/dreamer.pt
+cd dreamer4-main
+python eval_macro_time_alignment.py \
+  --checkpoint results/atomworld_twins_v1/best_model.pt \
+  --cache results/atomworld_twins_v1/segments.pt \
+  --split val \
+  --output results/atomworld_twins_v1/eval_time_alignment.json \
+  --save_all_samples
 ```
 
-### References
+For server-side batch workflows, see:
 
-- Li et al. (2025). *SwarmThinkers: Swarm Intelligence-Enhanced Kinetic Monte Carlo Simulations*
-- Schrittwieser et al. (2020). *Mastering Atari, Go, Chess and Shogi by Planning with a Learned Model* (MuZero)
-- Danihelka et al. (2022). *Policy Improvement by Planning with Gumbel* (Gumbel MuZero)
-- Hafner et al. (2024). *Mastering Diverse Domains through World Models* (DreamerV3/V4)
-  
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+- dreamer4-main/run_v24_v25_train.sh
+- dreamer4-main/run_v24_v25_eval.sh
 
----
+### Documents
 
-<a name="中文"></a>
+- doc/AtomWorld-Twins.md: the main discussion draft for the paper story
+- doc/AtomWorld-Twins_KMC_World_Model.pdf: the aligned slide deck used for narrative framing
+- doc/idea.md: the design notes behind the teacher-student macro world model
 
-## 🇨🇳 中文
+## 中文
 
-### 概述
+### 问题定义
 
-SwarmEcosystem 将**基于模型的强化学习**（Gumbel MuZero 和 DreamerV4）与**图神经网络**融合，用于求解原子尺度的动力学蒙特卡洛（KMC）模拟。通过在隐空间中学习物理动力学，我们消除了重要性采样方法中固有的方差爆炸问题。
+传统 KMC 之所以精确，是因为事件选择和时间推进都由同一套物理速率控制：发生什么事件取决于局部速率，停留多久取决于总速率。因此 KMC 本质上是一个连续时间马尔可夫链，而不是普通的固定步长模拟器。
 
-### 研究动机
+真正的难点在于，原子级长时程 rollout 成本很高。如果我们希望只保留少量关键状态点，同时又不丢掉时间尺度的准确性，就不能继续停留在逐微事件的 CTMC 叙事里。更自然的重写方式是 Semi-Markov：状态跳跃加上显式持续时间。
 
-传统的 RL-KMC 方法（如 PPO + 重要性采样）存在根本性问题：累积重要性权重 $w(\tau)$ 随轨迹长度呈**指数级方差增长**，导致物理时间估计不可靠。
+### 为什么必须引入 World Model
 
-我们的方法用**世界模型**替代事后的重要性修正，让模型在隐空间中原生学习 KMC 的泊松过程动力学，将空间构型演变和时间推进统一建模。
+一旦不再逐个 vacancy-hop 显式模拟，我们也就失去了传统 KMC 在每一个微步上提供的直接解析指导。模型必须在宏步层面重新学习 atom 物理世界的规律，也就是同时学会：
 
-### 架构
+- 哪些稀疏晶格编辑在物理上真实可达
+- 当前关键状态之后会走向哪个后继关键状态
+- 这次宏步跳跃会消耗多少累计物理时间
 
-```
-┌──────────────────────────────────────────────────┐
-│                 KMC 环境                          │
-│   BCC 晶格 (Fe-Cu 合金 + 空位)                    │
-└──────────────┬───────────────────────────────────┘
-               │ 图观测 (16-shell 缺陷图)
-               ▼
-┌──────────────────────────────────────────────────┐
-│           GNN 编码器 (消息传递)                    │
-│   节点: 相对于 agent 的 3D 偏移 + 缺陷类型         │
-│   边: 缺陷间偏移                                  │
-└──────────────┬───────────────────────────────────┘
-               │ 隐状态
-               ▼
-┌──────────────────────────────────────────────────┐
-│            世界模型 (隐空间动力学)                  │
-│                                                   │
-│  ┌─────────────┐  ┌─────────────┐                │
-│  │ Gumbel MuZero│  │ DreamerV4   │                │
-│  │  + MCTS      │  │ + Imagination│               │
-│  └──────┬──────┘  └──────┬──────┘                │
-│         │                │                        │
-│  ┌──────┴────────────────┴──────┐                │
-│  │     物理感知预测头            │                │
-│  │  • 策略  • 价值  • 奖励      │                │
-│  │  • 时间 (Δt)  • 能量 (ΔE)   │                │
-│  └──────────────────────────────┘                │
-└──────────────────────────────────────────────────┘
-```
+这也是 AtomWorld-Twins 必须被定义成 world model，而不是普通预测器的原因。
 
-### 核心创新
+### 方法概述
 
-- **物理时间折扣**：$\gamma = \exp(-\Delta t / \tau)$ 替代固定步数折扣，赋予智能体原生的时间感知能力
-- **对数空间时间预测**：time_head 预测 $\log(\Delta t)$，正确建模泊松过程
-- **梯度隔离**：两次独立反向传播，防止 time_head 的大梯度吞噬策略学习的梯度
-- **状态级时间预测**：$\Delta t$ 取决于 $\Gamma_{\text{tot}}$（状态属性），与动作选择无关——严格遵循 KMC 物理
-- **Dreamer 宏步编辑世界模型**：基于可达性约束的半马尔可夫晶格编辑世界模型，在 fixed-k 宏步上直接预测稀疏晶格编辑和累积物理时间，跳过逐事件 rollout
+AtomWorld-Twins 采用 teacher-student Dreamer macro world model。
 
-### Dreamer 宏步编辑世界模型
+Teacher：
 
-在逐事件世界模型之外，我们引入了基于 DreamerV4 的**可达性约束半马尔可夫晶格编辑世界模型**。该模型不再逐个 KMC 事件推演，而是以原子级 KMC 模拟器为教师，学习 **fixed-k 宏步预测**。
+- teacher 直接使用原子级 KMC 模拟器本身。
+- 从当前状态 X_t 出发，teacher rollout 一个 fixed-k 的微事件片段。
+- teacher 提供宏步终点状态 X_t+k、累计期望时间、实际累积时间，以及从微观路径中提取的 path summary。
 
-#### Teacher-Student 框架
+Student：
 
-宏步编辑世界模型采用 **Teacher-Student** 范式：
+- student 是一个在隐空间中运行的 Dreamer 风格宏步世界模型。
+- 它把当前局部 patch 与全局摘要编码成 latent state。
+- 它用 posterior 和 prior 两套路径 latent 区分训练期可识别性与测试期生成。
+- 它预测下一个宏步 latent state、受可达性约束的稀疏晶格编辑，以及宏步持续时间。
 
-**Teacher（教师）** — 直接使用现有的原子级 KMC 模拟器。给定当前状态 $X_t$，教师推演 k 个微事件，得到：
-1. 终点状态 $X_{t+k}$
-2. 累计期望时间 $\tau_{\text{exp}}$
-3. 实际累积时间 $\tau_{\text{real}}$
-4. 微观事件路径 $\text{path}_t$
-5. 由 $\text{path}_t$ 提取的 teacher path summary
+### 物理约束
 
-第一版**不**训练独立的 neural teacher——模拟器本身即为真值教师。
+模型围绕三条硬约束展开：
 
-**Student（学生）** — Dreamer 宏步世界模型，包含 5 个核心模块：
-1. **状态编码器（State Encoder）**：将活跃 patch 与全局摘要编码为隐状态 $z_t$
-2. **路径后验（Path Posterior）**：训练期使用 teacher path summary 推断路径 latent $c_{\text{post}}$
-3. **路径先验（Path Prior）**：推理期仅根据 $z_t$ 和全局摘要预测路径 latent $c_{\text{prior}}$
-4. **宏步动力学（Macro Dynamics）**：根据 $z_t$、$c$ 和 fixed-k 预测终态 latent $\hat{z}_{t+k}$
-5. **编辑-时长解码器（Edit-Duration Decoder）**：根据 $z_t$、$\hat{z}_{t+k}$ 和候选集合解码可达稀疏编辑与 $\tau_{\text{exp}}$
+- Inventory conservation：原子和 vacancy 的数量必须保持合法。
+- Local reachability：预测编辑必须落在 fixed-k 可达候选集合之内。
+- Continuous-time consistency：时间监督来自路径条件化的累计期望时间，而不是任意端点回归。
 
-**为什么需要 Posterior 和 Prior 两套路径表示？**
-训练期，后验利用真实教师路径提供高可识别性监督信号。推理期，先验必须在没有未来信息的情况下生成路径 latent。通过 KL 散度或蒸馏损失，迫使先验逼近后验，从而在训练期引入路径信息的同时，避免推理时的信息泄漏。
+这也是为什么模型输出被定义为受约束的稀疏 lattice edit，而不是无限制的 dense reconstruction。
 
-#### 核心思想
+### 仓库范围
 
-一个宏步直接预测：
-1. 哪些候选晶格位点会发生变化
-2. 变化位点的最终原子/vacancy 类型
-3. 宏步累积的期望物理时间 $\tau_{\text{exp}}$
-4. Dreamer 隐空间中的终态 latent
+这篇论文真正相关的工作流集中在下面这些部分：
 
-#### 为什么需要可达性约束
-
-仅靠守恒（各类原子总数不变）是必要条件而非充分条件。模型输出的编辑还必须对应 k 个合法 vacancy-hop 微事件内**物理上可达**的终点。为此，我们通过**可达候选集合** $C_t^{(k)}$ 将编辑输出空间限制在当前构型下实际可到达的位点范围内。
-
-#### Student 架构
-
-Student 世界模型保留 Dreamer 的核心结构（隐状态、prior/posterior、想象 rollout），同时新增宏步编辑能力：
-
-```
-┌─────────────────────────────────────────────────────────┐
-│              Dreamer 宏步编辑世界模型                      │
-│                                                          │
-│  ┌────────────────┐   ┌──────────────────────────────┐  │
-│  │ 状态编码器      │   │ 路径后验 (仅训练期)            │  │
-│  │ 活跃 Patch +   │   │ q(c | z_t, path, X_{t+k})   │  │
-│  │ 全局摘要       │   └──────────────┬───────────────┘  │
-│  └───────┬────────┘                   │                  │
-│          │ z_t                 ┌──────┴───────┐          │
-│          ▼                    │ 路径先验      │          │
-│  ┌───────────────────┐        │ p(c | z_t, k) │          │
-│  │ 宏步动力学        │◄───────┘ (推理期)      │          │
-│  │ z_{t+k} = G(z,c,k)│        └──────────────┘          │
-│  └───────┬───────────┘                                   │
-│          ▼                                               │
-│  ┌───────────────────┐  ┌────────────────────────────┐  │
-│  │ 编辑解码器        │  │ 时长预测头                  │  │
-│  │ Mask + Type logits│  │ LogNormal(μ_τ, σ_τ)       │  │
-│  └───────┬───────────┘  └────────────────────────────┘  │
-│          ▼                                               │
-│  ┌───────────────────────────────────────────────────┐  │
-│  │ 可达性 + 守恒投影                                  │  │
-│  │ • 仅在 C_t^(k) 内允许编辑                          │  │
-│  │ • 库存守恒                                         │  │
-│  │ • 编辑规模受 fixed-k 可达上界约束                   │  │
-│  └───────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
-```
-
-#### 物理约束
-
-三条不可违背的约束同时执行：
-- **库存守恒**：各类型原子与 vacancy 总数守恒
-- **局部可达性**：编辑必须落在由合法 vacancy-hop 序列导出的可达候选集合 $C_t^{(k)}$ 内
-- **连续时间一致性**：时间标签使用路径条件化的累积期望时间 $\tau_{\text{exp}} = \sum_{j=0}^{k-1} 1/\Gamma_{\text{tot}}(s_{t+j})$，而非任意端点回归
-
-#### 训练路线
-
-- **Phase 0**：离线统计——验证任务可学性（稀疏度、时间分布、候选集大小）
-- **Phase 1**：fixed-k 宏步探针，使用 teacher path summary 和候选集约束
-- **Phase 2**：引入投影训练，将守恒与可达性违反率降至零
-- **Phase 3**：Dreamer rollout 验证——通过 prior 进行连续宏步想象
-- **Phase 4**：multi-k 扩展（$k \in \{2, 4, 8, 16\}$）
-- **Phase 5**：可选的 learned micro teacher 蒸馏
-
-### 项目结构
-
-```
-SwarmEcosystem/
-├── LightZero-main/              # Gumbel MuZero 框架
-│   ├── lzero/model/             # MuZero + GNN 模型
-│   └── zoo/kmc/                 # KMC 训练脚本
-├── dreamer4-main/               # DreamerV4 框架
-│   ├── dreamer4/                # Dreamer 核心模块
-│   │   └── macro_edit.py        # 宏步编辑世界模型
-│   ├── train_dreamer_standalone.py
-│   └── train_dreamer_macro_edit.py  # 宏步编辑训练
-├── RLKMC-MASSIVE-main/          # KMC 环境 + PPO 基线
-│   └── RL4KMC/                  # 环境与图编码
-├── doc/                         # 参考文献与报告
-│   └── idea.md                  # 宏步编辑设计文档
-├── eval_all_models.py           # 模型评估
-├── eval_time_alignment.py       # 物理时间对齐评估
-└── results/                     # 训练结果
+```text
+AtomWorld-Twins/
+├── dreamer4-main/
+│   ├── train_dreamer_macro_edit.py
+│   ├── eval_macro_time_alignment.py
+│   ├── run_v24_v25_train.sh
+│   └── run_v24_v25_eval.sh
+├── RLKMC-MASSIVE-main/
+├── doc/
+│   ├── AtomWorld-Twins.md
+│   ├── AtomWorld-Twins_KMC_World_Model.pdf
+│   └── idea.md
+└── results/
 ```
 
 ### 快速开始
 
-#### 环境要求
+环境要求：
 
 - Python 3.10+
-- PyTorch 2.0+ (CUDA 12.1)
-- torch_geometric
-- numpy, scipy
+- PyTorch 2.0+
+- 使用当前仓库中 Dreamer 与 RLKMC 相关依赖所对应的可运行环境
 
-#### 训练
+训练宏步世界模型：
 
 ```bash
-# 训练 Gumbel MuZero + GNN
-cd LightZero-main
-python zoo/kmc/train_muzero_standalone.py \
-  --lattice_size 40 40 40 --cu_density 0.0134 --v_density 0.0002 \
-  --max_shells 16 --neighbor_order 2NN \
-  --total_iterations 500 --use_physics_discount
-
-# 训练 DreamerV4 + GNN
-cd dreamer4-main
-python train_dreamer_standalone.py \
-  --lattice_size 40 40 40 --cu_density 0.0134 --v_density 0.0002 \
-  --max_shells 16 --neighbor_order 2NN \
-  --total_iterations 500
-
-# 训练 Dreamer 宏步编辑世界模型（fixed-k 离线）
 cd dreamer4-main
 python train_dreamer_macro_edit.py \
-  --macro_k 4 --use_teacher_path_summary \
-  --use_reachability_constraint
+  --save_dir results/atomworld_twins_v1 \
+  --dataset_cache results/atomworld_twins_v1/segments.pt \
+  --segment_k 4 \
+  --teacher_path_summary_mode stepwise \
+  --tau_supervision_mode prior_main \
+  --train_segments 2000 \
+  --val_segments 400 \
+  --max_candidate_sites 128 \
+  --epochs 80 \
+  --device cuda
 ```
 
-#### 评估
+执行 teacher 对齐的时间评估：
 
 ```bash
-# 评估所有模型（PPO、MuZero、Dreamer）
-python eval_all_models.py
-
-# 物理时间对齐评估
-python eval_time_alignment.py \
-  --muzero_ckpt path/to/muzero.pt \
-  --dreamer_ckpt path/to/dreamer.pt
+cd dreamer4-main
+python eval_macro_time_alignment.py \
+  --checkpoint results/atomworld_twins_v1/best_model.pt \
+  --cache results/atomworld_twins_v1/segments.pt \
+  --split val \
+  --output results/atomworld_twins_v1/eval_time_alignment.json \
+  --save_all_samples
 ```
 
-### 参考文献
+如果要直接参考服务器批量脚本，可查看：
 
-- Li et al. (2025). *SwarmThinkers: 群体智能增强的动力学蒙特卡洛模拟*
-- Schrittwieser et al. (2020). *MuZero: 通过学习模型进行规划*
-- Danihelka et al. (2022). *Gumbel MuZero: 基于 Gumbel 采样的策略改进*
-- Hafner et al. (2024). *DreamerV3/V4: 通过世界模型掌握多领域任务*
+- dreamer4-main/run_v24_v25_train.sh
+- dreamer4-main/run_v24_v25_eval.sh
 
+### 相关文档
 
+- doc/AtomWorld-Twins.md：当前论文故事的主讨论稿
+- doc/AtomWorld-Twins_KMC_World_Model.pdf：已对齐口径的演示稿
+- doc/idea.md：teacher-student macro world model 的设计草稿
 
+## License
 
-
-本项目基于 MIT 许可证开源 — 详见 [LICENSE](LICENSE) 文件。
+This repository is released under the MIT License. See LICENSE for details.

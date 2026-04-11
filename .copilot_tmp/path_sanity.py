@@ -10,7 +10,7 @@ def main() -> None:
     torch.manual_seed(0)
     np.random.seed(0)
 
-    cache = '/Users/panziming/SwarmEcosystem/results/dreamer_macro_edit_v13_fixinit_qtrain_k4c384/segments.pt'
+    cache = '/Users/panziming/AtomWorld-Twins/results/dreamer_macro_edit_v13_fixinit_qtrain_k4c384/segments.pt'
     payload = torch.load(cache, map_location='cpu', weights_only=False)
     train_samples = [mod.MacroSegmentSample(**item) for item in payload['train'][:16]]
     val_samples = [mod.MacroSegmentSample(**item) for item in payload['val'][:16]]

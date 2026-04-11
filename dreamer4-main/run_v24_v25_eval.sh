@@ -5,7 +5,7 @@
 # ═══════════════════════════════════════════════════════════
 
 set -e
-cd /home/likun/panziming/SwarmEcosystem/dreamer4-main
+cd /home/likun/panziming/AtomWorld-Twins/dreamer4-main
 
 echo "═══════════════════════════════════════════════════════════"
 echo "Evaluating v24 and v25"
@@ -46,6 +46,6 @@ echo "  v25: results/dreamer_macro_edit_v25_neural_teacher/eval_full_samples.jso
 echo "  v25 (KMC): results/dreamer_macro_edit_v25_neural_teacher/eval_kmc_segments.json"
 echo ""
 echo "Copy results back to local machine:"
-echo "  scp -r likun@server:~/panziming/SwarmEcosystem/dreamer4-main/results/dreamer_macro_edit_v24_energy_fix/ results/"
-echo "  scp -r likun@server:~/panziming/SwarmEcosystem/dreamer4-main/results/dreamer_macro_edit_v25_neural_teacher/ results/"
+echo "  scp -r likun@server:~/panziming/AtomWorld-Twins/dreamer4-main/results/dreamer_macro_edit_v24_energy_fix/ results/"
+echo "  scp -r likun@server:~/panziming/AtomWorld-Twins/dreamer4-main/results/dreamer_macro_edit_v25_neural_teacher/ results/"
 echo "═══════════════════════════════════════════════════════════"

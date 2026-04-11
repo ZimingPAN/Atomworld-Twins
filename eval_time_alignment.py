@@ -209,23 +209,16 @@ def run_muzero_with_time(env_cfg, model_path, device, n_episodes, max_steps, mct
             true_total_rate = env.current_total_rate()
             true_expected_dt = expected_delta_t_from_rate(true_total_rate)
 
-            policy = mcts.search(obs, mask)
+            policy = mcts.search(obs, mask, expected_delta_t=true_expected_dt)
             action = int(np.argmax(policy))
 
-            # Predict E[Δt | s] using physics baseline from observation.
-            # The obs contains log(Γ_tot) at stats[3], so E[Δt] = 1/Γ_tot = exp(-stats[3]).
-            # We use this directly instead of the learned time_head residual,
-            # because E[Δt|s] = 1/Γ_tot is exact for Poisson processes.
+            # Predict E[Δt | s] using the learned time_head.
+            # In v20, time_head learns log(E[Δt]) from GNN latent directly.
             with torch.no_grad():
                 obs_t = torch.tensor(obs, dtype=torch.float32).unsqueeze(0).to(device)
                 init_out = model.initial_inference(obs_t)
-                # Use log(Γ_tot) from obs stats for physics-exact prediction
-                log_total_rate = model.latest_log_total_rate
-                if log_total_rate is not None:
-                    pred_dt = max(torch.exp(-log_total_rate).item(), 0.0)
-                else:
-                    # Fallback to true_expected_dt if log_total_rate unavailable
-                    pred_dt = true_expected_dt
+                latent = init_out.latent_state
+                pred_dt = max(model.predict_time_delta(latent).item(), 0.0)
 
             obs, mask, reward, done, info = env.step(action)
             real_dt = info["delta_t"]

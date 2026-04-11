@@ -170,14 +170,13 @@ class KMCEnvWrapper:
 
     def _obs(self, total_rate: float | None = None) -> np.ndarray:
         share_obs = np.zeros(self.shape.stats_dim, dtype=np.float32)
-        # Feature 3: inject physics parameters into stats vector
         share_obs[0] = self.cfg.get("temperature", 300.0) / 1000.0  # normalized
         share_obs[1] = self.cfg.get("cu_density", 0.05)
         share_obs[2] = self.cfg.get("v_density", 0.0002)
-        # Inject log(Γ_tot) into stats for time_head baseline anchor
+        # Inject log(Γ_tot) for analytical time prediction E[Δt]=exp(-stats[3])
         if total_rate is None:
             total_rate = self.current_total_rate()
-        share_obs[3] = np.log(max(total_rate, 1e-20))  # log(Γ_tot)
+        share_obs[3] = np.log(max(total_rate, 1e-20))
         return build_defect_graph_observation(self.env, shape=self.shape, share_obs=share_obs).astype(np.float32)
 
     def _mask(self) -> np.ndarray:
@@ -203,8 +202,14 @@ class SimpleMCTS:
         self.time_scale_tau = time_scale_tau
 
     @torch.no_grad()
-    def search(self, obs: np.ndarray, action_mask: np.ndarray) -> np.ndarray:
-        """Run MCTS and return improved policy (action probs)."""
+    def search(self, obs: np.ndarray, action_mask: np.ndarray,
+               expected_delta_t: float | None = None) -> np.ndarray:
+        """Run MCTS and return improved policy (action probs).
+
+        Args:
+            expected_delta_t: true E[Δt]=1/Γ_tot from env, used for physics discount.
+                If None, falls back to model prediction or fixed discount.
+        """
         self.model.eval()
         obs_t = torch.tensor(obs, dtype=torch.float32).unsqueeze(0).to(self.device)
         out = self.model.initial_inference(obs_t)
@@ -232,11 +237,16 @@ class SimpleMCTS:
         if len(valid_actions) == 0:
             return np.ones(n_actions) / n_actions
 
-        # Physics-time discount: compute γ from ROOT state ONCE (Δt is a state
-        # property — same for all actions, determined by Γ_tot of current config)
-        if self.use_physics_discount and hasattr(self.model, 'latest_time_delta'):
-            root_dt = max(self.model.latest_time_delta[0].item(), 1e-8)
-            root_gamma = math.exp(-root_dt / self.time_scale_tau)
+        # Physics-time discount: use true E[Δt] from env if available (most reliable),
+        # otherwise fall back to model prediction or fixed discount.
+        if self.use_physics_discount:
+            if expected_delta_t is not None and expected_delta_t > 0:
+                root_dt = expected_delta_t
+            elif hasattr(self.model, 'latest_time_delta') and self.model.latest_time_delta is not None:
+                root_dt = max(self.model.latest_time_delta[0].item(), 1e-20)
+            else:
+                root_dt = 0.0
+            root_gamma = math.exp(-root_dt / self.time_scale_tau) if root_dt > 0 else self.discount
         else:
             root_gamma = self.discount
 
@@ -300,8 +310,11 @@ def collect_episode(env: KMCEnvWrapper, model: KMCGraphMuZeroModel,
     done = False
 
     while not done:
+        # Get true E[Δt] for physics-time discount in MCTS
+        edt = env.current_expected_delta_t()
+
         # MCTS search
-        policy = mcts.search(obs, mask)
+        policy = mcts.search(obs, mask, expected_delta_t=edt)
 
         # ε-greedy exploration
         if random.random() < epsilon:
@@ -330,8 +343,7 @@ def collect_episode(env: KMCEnvWrapper, model: KMCGraphMuZeroModel,
 def train_step(model: KMCGraphMuZeroModel, optimizer: torch.optim.Optimizer,
                batch: List[Transition], device: str, discount: float,
                temperature: float = 300.0, use_entropy_reg: bool = False,
-               use_physics_discount: bool = False, time_scale_tau: float = 1.0,
-               time_loss_weight: float = 0.1) -> dict:
+               use_physics_discount: bool = False, time_scale_tau: float = 0.02) -> dict:
     """One training step on a batch of transitions."""
     obs = torch.tensor(np.stack([t.obs for t in batch]), dtype=torch.float32, device=device)
     actions = torch.tensor([t.action for t in batch], dtype=torch.long, device=device)
@@ -390,7 +402,6 @@ def train_step(model: KMCGraphMuZeroModel, optimizer: torch.optim.Optimizer,
 
     # 5. Value loss (bootstrap target)
     delta_ts = torch.tensor([t.delta_t for t in batch], dtype=torch.float32, device=device)
-    expected_delta_ts = torch.tensor([t.expected_delta_t for t in batch], dtype=torch.float32, device=device)
     with torch.no_grad():
         next_out = model.initial_inference(next_obs)
         if model.categorical_distribution:
@@ -437,36 +448,20 @@ def train_step(model: KMCGraphMuZeroModel, optimizer: torch.optim.Optimizer,
         entropy_coeff = 0.0
 
     # Total loss (main: policy + reward + value)
+    # No time_loss — time prediction is analytical E[Δt]=1/Γ_tot from stats[3]
     main_loss = policy_loss + reward_loss + 0.25 * value_loss - entropy_coeff * entropy
 
-    # Time supervision with gradient isolation (AGENTS.md §6 rule 5):
-    # Residual mode: log(E[Δt|s]) = -log(Γ_tot) + residual(latent.detach())
-    # Use latent.detach() to prevent time_head gradients from eroding backbone.
-    # Two independent backward passes to avoid gradient budget interference.
-    log_total_rates = torch.tensor(
-        [np.log(max(t.total_rate, 1e-20)) for t in batch],
-        dtype=torch.float32, device=device,
-    )
-    log_time_pred = model.predict_log_time_delta(latent.detach(), log_total_rate=log_total_rates)
-    log_time_target = torch.log(expected_delta_ts.clamp(min=1e-10))
-    time_loss = F.mse_loss(log_time_pred, log_time_target)
-
-    # First backward: main loss (policy, reward, value)
     optimizer.zero_grad()
     main_loss.backward()
-    # Second backward: time loss (isolated, only updates time_head parameters)
-    (time_loss_weight * time_loss).backward()
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer.step()
 
-    loss = main_loss + time_loss_weight * time_loss  # for logging only
-
     return {
-        "loss": loss.item(),
+        "loss": main_loss.item(),
         "policy_loss": policy_loss.item(),
         "reward_loss": reward_loss.item(),
         "value_loss": value_loss.item(),
-        "time_loss": time_loss.item(),
+        "time_loss": 0.0,
         "entropy": entropy.item(),
     }
 
@@ -486,7 +481,8 @@ def evaluate(env_cfg: dict, model: KMCGraphMuZeroModel,
         done = False
         steps = 0
         while not done:
-            policy = mcts.search(obs, mask)
+            edt = eval_env.current_expected_delta_t()
+            policy = mcts.search(obs, mask, expected_delta_t=edt)
             action = int(np.argmax(policy))
             obs, mask, reward, done, info = eval_env.step(action)
             ep_reward += reward
@@ -543,8 +539,8 @@ def main():
     # Feature flags
     parser.add_argument("--use_physics_discount", action=argparse.BooleanOptionalAction, default=True,
                         help="Feature 1: use physics-time discount γ=exp(-Δt/τ) in MCTS and training")
-    parser.add_argument("--time_scale_tau", type=float, default=1.0,
-                        help="Time scale τ for physics discount γ=exp(-Δt/τ)")
+    parser.add_argument("--time_scale_tau", type=float, default=0.02,
+                        help="Time scale τ for physics discount γ=exp(-Δt/τ). ~Traditional KMC per-step Δt.")
     parser.add_argument("--use_entropy_reg", action=argparse.BooleanOptionalAction, default=True,
                         help="Feature 2: temperature-based entropy regularization")
     args = parser.parse_args()
@@ -646,8 +642,7 @@ def main():
                                     temperature=args.temperature,
                                     use_entropy_reg=args.use_entropy_reg,
                                     use_physics_discount=args.use_physics_discount,
-                                    time_scale_tau=args.time_scale_tau,
-                                    time_loss_weight=0.1)
+                                    time_scale_tau=args.time_scale_tau)
                 train_losses.append(losses)
 
         collect_time = time.time() - t0

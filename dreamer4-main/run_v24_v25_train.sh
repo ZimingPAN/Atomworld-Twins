@@ -5,7 +5,7 @@
 # ═══════════════════════════════════════════════════════════
 
 set -e
-cd /home/likun/panziming/SwarmEcosystem/dreamer4-main
+cd /home/likun/panziming/AtomWorld-Twins/dreamer4-main
 
 # ─── Step 0: Copy v22 results to new baseline name ───
 echo "=== Step 0: Rename v22 → macro_dreamer_kmc_baseline ==="
@@ -24,10 +24,10 @@ echo "Done: eval_train_split.json"
 
 # ─── Step 2: Find Dreamer v9 checkpoint (for v25) ───
 echo "=== Step 2: Locating Dreamer v9 checkpoint ==="
-DREAMER_V9_CKPT=$(find /home/likun/panziming/SwarmEcosystem -name 'best_model.pt' -path '*dreamer*v9*' 2>/dev/null | head -1)
+DREAMER_V9_CKPT=$(find /home/likun/panziming/AtomWorld-Twins -name 'best_model.pt' -path '*dreamer*v9*' 2>/dev/null | head -1)
 if [ -z "$DREAMER_V9_CKPT" ]; then
     # Try broader search
-    DREAMER_V9_CKPT=$(find /home/likun/panziming/SwarmEcosystem -name 'best_model.pt' -path '*dreamer*' | grep -v macro | head -1)
+    DREAMER_V9_CKPT=$(find /home/likun/panziming/AtomWorld-Twins -name 'best_model.pt' -path '*dreamer*' | grep -v macro | head -1)
 fi
 echo "Dreamer v9 checkpoint: $DREAMER_V9_CKPT"
 
