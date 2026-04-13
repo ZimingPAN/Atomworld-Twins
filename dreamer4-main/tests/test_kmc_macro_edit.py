@@ -346,6 +346,52 @@ def test_predict_reward_and_duration_uses_physical_baseline_when_residual_is_zer
     assert torch.allclose(tau_mu, torch.tensor([math.log(4.0 / 100.0)], dtype=torch.float32), atol=1e-6)
 
 
+def test_predict_reward_and_durations_returns_expected_and_realized_heads():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+    with torch.no_grad():
+        model.duration_head[-1].weight.zero_()
+        model.realized_duration_head[-1].weight.zero_()
+
+    global_summary = torch.zeros((1, 16), dtype=torch.float32)
+    global_summary[0, 10] = math.log(100.0)
+    outputs = model.predict_reward_and_durations(
+        global_latent=torch.zeros((1, model.global_latent_dim), dtype=torch.float32),
+        predicted_next_global=torch.zeros((1, model.global_latent_dim), dtype=torch.float32),
+        path_latent=torch.zeros((1, model.path_latent_dim), dtype=torch.float32),
+        global_summary=global_summary,
+        horizon_k=torch.tensor([4], dtype=torch.long),
+    )
+
+    assert set(outputs) == {
+        "reward",
+        "expected_tau_mu",
+        "expected_tau_log_sigma",
+        "realized_tau_mu",
+        "realized_tau_log_sigma",
+        "gate_logit",
+    }
+    baseline = torch.tensor([math.log(4.0 / 100.0)], dtype=torch.float32)
+    assert torch.allclose(outputs["expected_tau_mu"], baseline, atol=1e-6)
+    assert torch.allclose(outputs["realized_tau_mu"], baseline, atol=1e-6)
+    assert torch.allclose(outputs["expected_tau_log_sigma"], torch.tensor([-2.0], dtype=torch.float32), atol=1e-6)
+    assert torch.allclose(outputs["realized_tau_log_sigma"], torch.tensor([-1.0], dtype=torch.float32), atol=1e-6)
+
+
 def test_detached_duration_inputs_block_backbone_gradients():
     model = MacroDreamerEditModel(
         max_vacancies=4,
@@ -912,3 +958,18 @@ def test_selection_score_penalizes_unchanged_vacancy_copy_acc():
     worse_score = _selection_score(worse_metrics, {"val": {"coverage": 1.0}})
 
     assert worse_score > base_score
+
+
+def test_compute_lognormal_distribution_metrics_reports_calibrated_center_case():
+    mu = np.log(np.asarray([1.0, 2.0, 4.0], dtype=np.float64))
+    log_sigma = np.log(np.asarray([0.2, 0.2, 0.2], dtype=np.float64))
+    target = np.asarray([1.0, 2.0, 4.0], dtype=np.float64)
+
+    metrics = mod._compute_lognormal_distribution_metrics(mu, log_sigma, target)
+
+    assert metrics["mae"] == pytest.approx(0.0)
+    assert metrics["log_mae"] == pytest.approx(0.0)
+    assert metrics["coverage_68"] == pytest.approx(1.0)
+    assert metrics["coverage_95"] == pytest.approx(1.0)
+    assert metrics["pit_mean"] == pytest.approx(0.5)
+    assert metrics["pit_ks"] == pytest.approx(0.5, rel=1e-6)

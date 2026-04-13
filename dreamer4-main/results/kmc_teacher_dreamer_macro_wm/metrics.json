@@ -1,0 +1,71 @@
+{
+  "epoch": 100,
+  "train": {
+    "loss": 3.156243574142456,
+    "mask": 1.8093747749328613,
+    "count": 2.874481689453125,
+    "pair": 0.9186189403533935,
+    "proj_mask": 0.5984741773605347,
+    "type": 0.7660893898010254,
+    "atom_to_vac_type": 0.09684120225906372,
+    "vac_to_atom_type": 0.34049466300010683,
+    "tau": -0.7802453169822693,
+    "tau_post": 313.5552135839462,
+    "tau_prior": -0.7802453169822693,
+    "tau_post_scale": 0.0,
+    "reward": 0.07796432027220726,
+    "latent": 0.009383135259151458,
+    "proj": 0.008959056213498115,
+    "path": 2.395718654632568,
+    "prior_edit": 2.7590354194641113,
+    "prior_latent": 0.0072059699669480325,
+    "mask_aux_scale": 0.0999999999999999
+  },
+  "val": {
+    "reward_mae": 1.0728028331120731,
+    "reward_rmse": 1.3960171624319615,
+    "reward_corr": 0.39126506195478766,
+    "tau_log_mae": 0.3279515839804559,
+    "tau_log_rmse": 0.7615015507209083,
+    "tau_log_corr": 0.9615684236225943,
+    "tau_scale_ratio": 0.9337185303111142,
+    "change_f1": 0.5105145177245141,
+    "change_topk_f1": 0.4905505952380952,
+    "changed_type_acc": 0.9417142088596637,
+    "projected_change_f1": 0.3578450091575091,
+    "projected_changed_type_acc": 0.35631396908026475,
+    "unchanged_copy_acc": 0.4890918754614316,
+    "unchanged_atom_copy_acc": 0.4964086619707254,
+    "unchanged_vacancy_copy_acc": 0.2850609364417883,
+    "raw_vac_to_fe_count": 5.665,
+    "raw_fe_to_vac_count": 59.87,
+    "raw_vac_to_cu_count": 0.8925,
+    "raw_cu_to_vac_count": 2.2275,
+    "raw_matched_pair_count": 6.5575,
+    "latent_l1": 0.004325068949793394,
+    "projected_global_l1": 0.0020016263991307756,
+    "reachability_violation_rate": 0.0,
+    "mean_vacancy_transport_cost": 4.6425
+  },
+  "dataset": {
+    "train": {
+      "attempts": 17455,
+      "skipped_uncovered": 15348,
+      "skipped_terminal": 18,
+      "skipped_noop": 89,
+      "candidate_size_sum": 256000.0,
+      "coverage": 0.11458034947006589,
+      "avg_candidate_size": 128.0
+    },
+    "val": {
+      "attempts": 3396,
+      "skipped_uncovered": 2971,
+      "skipped_terminal": 4,
+      "skipped_noop": 21,
+      "candidate_size_sum": 51200.0,
+      "coverage": 0.11778563015312132,
+      "avg_candidate_size": 128.0
+    }
+  },
+  "selection_score": 3.3836552428148714
+}

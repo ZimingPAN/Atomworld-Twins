@@ -4,9 +4,7 @@ AtomWorld-Twins is a paper-facing repository for a teacher-student Dreamer macro
 
 AtomWorld-Twins 面向一篇聚焦 teacher-student Dreamer macro world model 的论文。核心主张很明确：KMC 本质上是连续时间马尔可夫链；如果希望只保留少量关键状态点同时保持时间准确，就应该把问题重新表述为一个 Semi-Markov world model 问题。
 
-This README intentionally focuses only on the AtomWorld-Twins story. Legacy directories or earlier exploratory work may still exist in the repository, but they are out of scope for this paper-oriented overview.
 
-本 README 有意只服务于 AtomWorld-Twins 这篇文章。仓库中如果仍保留历史实验目录或更早的探索性工作，它们都不属于本文的主线范围。
 
 ## English
 
@@ -45,6 +43,7 @@ Student:
 - It encodes the current local patch and global summary into a latent state.
 - It uses posterior and prior path latents to separate training-time identifiability from test-time generation.
 - It predicts the next macro latent state, sparse reachable lattice edits, and macro duration.
+- The time branch keeps `tau_exp` as the primary supervision target and uses a separate lognormal auxiliary head for `tau_real`, so realized waiting time is treated as a conditional distribution rather than a deterministic endpoint.
 
 ### Physical Constraints
 
@@ -52,28 +51,11 @@ The model is designed around three hard constraints.
 
 - Inventory conservation: atom and vacancy counts must remain valid.
 - Local reachability: predicted edits must lie inside the k-step reachable candidate set.
-- Continuous-time consistency: duration supervision uses path-conditioned accumulated expected time rather than arbitrary endpoint regression.
+- Continuous-time consistency: duration supervision uses path-conditioned accumulated expected time as the primary target; realized waiting time is modeled only as an auxiliary conditional distribution rather than arbitrary endpoint regression.
 
 This is the reason the output is defined as reachability-constrained sparse lattice edits instead of unrestricted dense reconstruction.
 
-### Repository Scope
 
-The paper-oriented workflow is centered on the following components:
-
-```text
-AtomWorld-Twins/
-├── dreamer4-main/
-│   ├── train_dreamer_macro_edit.py
-│   ├── eval_macro_time_alignment.py
-│   ├── run_v24_v25_train.sh
-│   └── run_v24_v25_eval.sh
-├── RLKMC-MASSIVE-main/
-├── doc/
-│   ├── AtomWorld-Twins.md
-│   ├── AtomWorld-Twins_KMC_World_Model.pdf
-│   └── idea.md
-└── results/
-```
 
 ### Quick Start
 
@@ -93,6 +75,7 @@ python train_dreamer_macro_edit.py \
   --segment_k 4 \
   --teacher_path_summary_mode stepwise \
   --tau_supervision_mode prior_main \
+  --realized_tau_weight 0.25 \
   --train_segments 2000 \
   --val_segments 400 \
   --max_candidate_sites 128 \
@@ -112,16 +95,6 @@ python eval_macro_time_alignment.py \
   --save_all_samples
 ```
 
-For server-side batch workflows, see:
-
-- dreamer4-main/run_v24_v25_train.sh
-- dreamer4-main/run_v24_v25_eval.sh
-
-### Documents
-
-- doc/AtomWorld-Twins.md: the main discussion draft for the paper story
-- doc/AtomWorld-Twins_KMC_World_Model.pdf: the aligned slide deck used for narrative framing
-- doc/idea.md: the design notes behind the teacher-student macro world model
 
 ## 中文
 
@@ -157,6 +130,7 @@ Student：
 - 它把当前局部 patch 与全局摘要编码成 latent state。
 - 它用 posterior 和 prior 两套路径 latent 区分训练期可识别性与测试期生成。
 - 它预测下一个宏步 latent state、受可达性约束的稀疏晶格编辑，以及宏步持续时间。
+- 时间分支保持 `tau_exp` 为主监督，同时新增一个面向 `tau_real` 的对数正态辅助头，因此 realized waiting time 被表述为条件分布学习，而不是单点端点回归。
 
 ### 物理约束
 
@@ -164,28 +138,11 @@ Student：
 
 - Inventory conservation：原子和 vacancy 的数量必须保持合法。
 - Local reachability：预测编辑必须落在 fixed-k 可达候选集合之内。
-- Continuous-time consistency：时间监督来自路径条件化的累计期望时间，而不是任意端点回归。
+- Continuous-time consistency：时间监督以路径条件化的累计期望时间为主，`tau_real` 只作为辅助条件分布建模对象，而不是任意端点回归。
 
 这也是为什么模型输出被定义为受约束的稀疏 lattice edit，而不是无限制的 dense reconstruction。
 
-### 仓库范围
 
-这篇论文真正相关的工作流集中在下面这些部分：
-
-```text
-AtomWorld-Twins/
-├── dreamer4-main/
-│   ├── train_dreamer_macro_edit.py
-│   ├── eval_macro_time_alignment.py
-│   ├── run_v24_v25_train.sh
-│   └── run_v24_v25_eval.sh
-├── RLKMC-MASSIVE-main/
-├── doc/
-│   ├── AtomWorld-Twins.md
-│   ├── AtomWorld-Twins_KMC_World_Model.pdf
-│   └── idea.md
-└── results/
-```
 
 ### 快速开始
 
@@ -205,6 +162,7 @@ python train_dreamer_macro_edit.py \
   --segment_k 4 \
   --teacher_path_summary_mode stepwise \
   --tau_supervision_mode prior_main \
+  --realized_tau_weight 0.25 \
   --train_segments 2000 \
   --val_segments 400 \
   --max_candidate_sites 128 \
@@ -224,16 +182,7 @@ python eval_macro_time_alignment.py \
   --save_all_samples
 ```
 
-如果要直接参考服务器批量脚本，可查看：
 
-- dreamer4-main/run_v24_v25_train.sh
-- dreamer4-main/run_v24_v25_eval.sh
-
-### 相关文档
-
-- doc/AtomWorld-Twins.md：当前论文故事的主讨论稿
-- doc/AtomWorld-Twins_KMC_World_Model.pdf：已对齐口径的演示稿
-- doc/idea.md：teacher-student macro world model 的设计草稿
 
 ## License
 

@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover - optional dependency fallback
 
 
 NUM_SITE_TYPES = 3
+FE_SITE_TYPE = 0
 CU_SITE_TYPE = 1
 VACANCY_SITE_TYPE = 2
 BASE_TEACHER_PATH_SUMMARY_DIM = 18
@@ -46,6 +47,34 @@ def _periodic_edge_offsets(positions: torch.Tensor, box: torch.Tensor) -> torch.
     else:
         raise ValueError(f"expected box dims with shape [3] or [batch, 3], got {tuple(box.shape)}")
     return delta - torch.round(delta / box) * box
+
+
+def _soft_reward_context_features(
+    change_logits: torch.Tensor,
+    type_logits: torch.Tensor,
+    current_types: torch.Tensor,
+    candidate_mask: torch.Tensor,
+    horizon_k: torch.Tensor,
+) -> torch.Tensor:
+    change_prob = torch.sigmoid(change_logits) * candidate_mask
+    type_probs = torch.softmax(type_logits, dim=-1)
+    current_copy_prob = type_probs.gather(-1, current_types.unsqueeze(-1)).squeeze(-1)
+    typed_change_mass = change_prob * (1.0 - current_copy_prob)
+    vacancy_mask = (current_types == VACANCY_SITE_TYPE).to(change_prob.dtype) * candidate_mask
+    cu_mask = (current_types == CU_SITE_TYPE).to(change_prob.dtype) * candidate_mask
+    fe_mask = (current_types == FE_SITE_TYPE).to(change_prob.dtype) * candidate_mask
+    features = torch.stack(
+        [
+            typed_change_mass.sum(dim=-1),
+            (change_prob * type_probs[..., FE_SITE_TYPE] * vacancy_mask).sum(dim=-1),
+            (change_prob * type_probs[..., CU_SITE_TYPE] * vacancy_mask).sum(dim=-1),
+            (change_prob * type_probs[..., VACANCY_SITE_TYPE] * fe_mask).sum(dim=-1),
+            (change_prob * type_probs[..., VACANCY_SITE_TYPE] * cu_mask).sum(dim=-1),
+        ],
+        dim=-1,
+    )
+    horizon = horizon_k.to(device=features.device, dtype=features.dtype).clamp(min=1.0).unsqueeze(-1)
+    return features / horizon
 
 
 class _PatchEdgeBlock(nn.Module):
@@ -255,6 +284,8 @@ class MacroDreamerEditModel(nn.Module):
         self.global_summary_dim = int(global_summary_dim)
         self.teacher_path_summary_dim = int(teacher_path_summary_dim)
         self.path_latent_dim = int(path_latent_dim)
+        self.patch_latent_dim = int(patch_latent_dim)
+        self.reward_context_feature_dim = 5
         self.k_embed = nn.Embedding(self.max_macro_k + 1, 32)
         self.global_encoder = KMCGraphEncoder(
             max_vacancies=max_vacancies,
@@ -302,7 +333,20 @@ class MacroDreamerEditModel(nn.Module):
             nn.SiLU(),
             nn.Linear(256, 1),
         )
+        reward_context_in = self.patch_latent_dim + self.reward_context_feature_dim + 32
+        self.reward_context_head = nn.Sequential(
+            nn.LayerNorm(reward_context_in),
+            nn.Linear(reward_context_in, 128),
+            nn.SiLU(),
+            nn.Linear(128, 1),
+        )
         self.duration_head = nn.Sequential(
+            nn.LayerNorm(reward_time_in),
+            nn.Linear(reward_time_in, 256),
+            nn.SiLU(),
+            nn.Linear(256, 2),
+        )
+        self.realized_duration_head = nn.Sequential(
             nn.LayerNorm(reward_time_in),
             nn.Linear(reward_time_in, 256),
             nn.SiLU(),
@@ -319,6 +363,11 @@ class MacroDreamerEditModel(nn.Module):
             # The duration head predicts a residual around the physics baseline k / Gamma_tot(start).
             self.duration_head[-1].bias[0] = 0.0
             self.duration_head[-1].bias[1] = -2.0
+            # Realized waiting time is noisier, so start from the same baseline with a broader initial sigma.
+            self.realized_duration_head[-1].bias[0] = 0.0
+            self.realized_duration_head[-1].bias[1] = -1.0
+            self.reward_context_head[-1].weight.zero_()
+            self.reward_context_head[-1].bias.zero_()
 
     def encode_global(self, obs: torch.Tensor) -> torch.Tensor:
         latent = self.global_encoder(obs)
@@ -405,7 +454,18 @@ class MacroDreamerEditModel(nn.Module):
         copy_prior = F.one_hot(current_types, num_classes=NUM_SITE_TYPES).float() * self.type_copy_bias
         return raw_type_logits + copy_prior
 
-    def predict_reward_and_duration(
+    def _duration_stats_from_head(
+        self,
+        duration_head: nn.Sequential,
+        duration_hidden: torch.Tensor,
+        global_summary: torch.Tensor,
+        horizon_k: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        residual_mu, log_sigma = duration_head(duration_hidden).chunk(2, dim=-1)
+        mu = macro_duration_baseline_log_tau(global_summary, horizon_k).unsqueeze(-1) + residual_mu
+        return mu.squeeze(-1), log_sigma.squeeze(-1).clamp(min=-6.0, max=2.0)
+
+    def predict_reward_and_durations(
         self,
         global_latent: torch.Tensor,
         predicted_next_global: torch.Tensor,
@@ -414,10 +474,35 @@ class MacroDreamerEditModel(nn.Module):
         horizon_k: torch.Tensor,
         *,
         detach_duration_inputs: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        patch_latent: torch.Tensor | None = None,
+        change_logits: torch.Tensor | None = None,
+        type_logits: torch.Tensor | None = None,
+        current_types: torch.Tensor | None = None,
+        candidate_mask: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
         k_emb = self._k_embedding(horizon_k)
         reward_hidden = torch.cat([global_latent, predicted_next_global, path_latent, global_summary, k_emb], dim=-1)
-        reward = self.reward_head(reward_hidden).squeeze(-1)
+        if patch_latent is None:
+            reward_patch_latent = global_latent.new_zeros((global_latent.shape[0], self.patch_latent_dim))
+        else:
+            reward_patch_latent = patch_latent
+        if (
+            change_logits is not None
+            and type_logits is not None
+            and current_types is not None
+            and candidate_mask is not None
+        ):
+            reward_edit_features = _soft_reward_context_features(
+                change_logits=change_logits,
+                type_logits=type_logits,
+                current_types=current_types,
+                candidate_mask=candidate_mask,
+                horizon_k=horizon_k,
+            )
+        else:
+            reward_edit_features = global_latent.new_zeros((global_latent.shape[0], self.reward_context_feature_dim))
+        reward_context = torch.cat([reward_patch_latent, reward_edit_features, k_emb], dim=-1)
+        reward = self.reward_head(reward_hidden).squeeze(-1) + self.reward_context_head(reward_context).squeeze(-1)
         gate_logit = self.reward_gate_head(reward_hidden).squeeze(-1)
 
         if detach_duration_inputs:
@@ -431,9 +516,56 @@ class MacroDreamerEditModel(nn.Module):
         else:
             duration_inputs = [global_latent, predicted_next_global, path_latent, global_summary, k_emb]
         duration_hidden = torch.cat(duration_inputs, dim=-1)
-        residual_mu, log_sigma = self.duration_head(duration_hidden).chunk(2, dim=-1)
-        mu = macro_duration_baseline_log_tau(global_summary, horizon_k).unsqueeze(-1) + residual_mu
-        return reward, mu.squeeze(-1), log_sigma.squeeze(-1).clamp(min=-6.0, max=2.0), gate_logit
+        expected_tau_mu, expected_tau_log_sigma = self._duration_stats_from_head(
+            self.duration_head,
+            duration_hidden,
+            global_summary,
+            horizon_k,
+        )
+        realized_tau_mu, realized_tau_log_sigma = self._duration_stats_from_head(
+            self.realized_duration_head,
+            duration_hidden,
+            global_summary,
+            horizon_k,
+        )
+        return {
+            "reward": reward,
+            "expected_tau_mu": expected_tau_mu,
+            "expected_tau_log_sigma": expected_tau_log_sigma,
+            "realized_tau_mu": realized_tau_mu,
+            "realized_tau_log_sigma": realized_tau_log_sigma,
+            "gate_logit": gate_logit,
+        }
+
+    def predict_reward_and_duration(
+        self,
+        global_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        global_summary: torch.Tensor,
+        horizon_k: torch.Tensor,
+        *,
+        detach_duration_inputs: bool = False,
+        patch_latent: torch.Tensor | None = None,
+        change_logits: torch.Tensor | None = None,
+        type_logits: torch.Tensor | None = None,
+        current_types: torch.Tensor | None = None,
+        candidate_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        outputs = self.predict_reward_and_durations(
+            global_latent,
+            predicted_next_global,
+            path_latent,
+            global_summary,
+            horizon_k,
+            detach_duration_inputs=detach_duration_inputs,
+            patch_latent=patch_latent,
+            change_logits=change_logits,
+            type_logits=type_logits,
+            current_types=current_types,
+            candidate_mask=candidate_mask,
+        )
+        return outputs["reward"], outputs["expected_tau_mu"], outputs["expected_tau_log_sigma"], outputs["gate_logit"]
 
 
 def _assignment_slots(quotas: Iterable[int]) -> list[int]:

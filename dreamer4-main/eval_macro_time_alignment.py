@@ -80,6 +80,7 @@ def _build_model(ckpt: dict[str, object], device: str) -> mod.MacroDreamerEditMo
         max_macro_k=max(int(args["segment_k"]), 16),
     ).to(device)
     missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
+    model.realized_tau_head_loaded = not any(key.startswith("realized_duration_head.") for key in missing)
     if missing:
         print(f"Eval: missing keys initialized from scratch: {missing}")
     if unexpected:
@@ -125,10 +126,14 @@ def main() -> None:
     pred_reward_sum = []
     true_reward_sum = []
     pred_tau = []
+    pred_realized_tau = []
+    pred_realized_tau_mu = []
+    pred_realized_tau_log_sigma = []
     true_tau_exp = []
     true_tau_real = []
     sample_rows = []
     sample_index = 0
+    realized_tau_source = "realized_duration_head" if getattr(model, "realized_tau_head_loaded", True) else "expected_duration_head_fallback"
 
     with torch.no_grad():
         for batch in loader:
@@ -141,21 +146,45 @@ def main() -> None:
             )
             path_latent = model.sample_path_latent(prior_mu, prior_logvar, deterministic=True)
             next_pred = model.predict_next_global(global_latent, path_latent, tensors["horizon_k"])
-            reward_hat, tau_mu, _tau_log_sigma, gate_logit = model.predict_reward_and_duration(
+            duration_outputs = mod._predict_reward_and_duration_outputs(
+                model,
                 global_latent,
                 next_pred,
                 path_latent,
                 tensors["global_summary"],
                 tensors["horizon_k"],
             )
+            reward_hat = duration_outputs["reward"]
+            tau_mu = duration_outputs["expected_tau_mu"]
+            tau_log_sigma = duration_outputs["expected_tau_log_sigma"]
+            if realized_tau_source == "realized_duration_head":
+                realized_tau_mu = duration_outputs["realized_tau_mu"]
+                realized_tau_log_sigma = duration_outputs["realized_tau_log_sigma"]
+            else:
+                realized_tau_mu = tau_mu
+                realized_tau_log_sigma = tau_log_sigma
+            gate_logit = duration_outputs["gate_logit"]
             gated_reward = reward_hat * torch.sigmoid(gate_logit)
             batch_pred_reward = gated_reward.detach().cpu().numpy()
             batch_pred_tau = torch.exp(tau_mu).detach().cpu().numpy()
+            batch_pred_realized_tau = torch.exp(realized_tau_mu).detach().cpu().numpy()
+            batch_pred_realized_tau_mu = realized_tau_mu.detach().cpu().numpy()
+            batch_pred_realized_tau_log_sigma = realized_tau_log_sigma.detach().cpu().numpy()
 
-            for sample, item_pred_reward, item_pred_tau in zip(batch, batch_pred_reward, batch_pred_tau):
+            for sample, item_pred_reward, item_pred_tau, item_pred_realized_tau, item_pred_realized_tau_mu, item_pred_realized_tau_log_sigma in zip(
+                batch,
+                batch_pred_reward,
+                batch_pred_tau,
+                batch_pred_realized_tau,
+                batch_pred_realized_tau_mu,
+                batch_pred_realized_tau_log_sigma,
+            ):
                 pred_reward_sum.append(float(item_pred_reward))
                 true_reward_sum.append(float(sample.reward_sum))
                 pred_tau.append(float(item_pred_tau))
+                pred_realized_tau.append(float(item_pred_realized_tau))
+                pred_realized_tau_mu.append(float(item_pred_realized_tau_mu))
+                pred_realized_tau_log_sigma.append(float(item_pred_realized_tau_log_sigma))
                 true_tau_exp.append(float(sample.tau_exp))
                 true_tau_real.append(float(sample.tau_real))
                 sample_rows.append(
@@ -169,6 +198,10 @@ def main() -> None:
                         "predicted_reward_sum": float(item_pred_reward),
                         "predicted_delta_e": float(item_pred_reward / reward_scale),
                         "predicted_tau": float(item_pred_tau),
+                        "predicted_expected_tau": float(item_pred_tau),
+                        "predicted_realized_tau": float(item_pred_realized_tau),
+                        "predicted_realized_tau_log_mu": float(item_pred_realized_tau_mu),
+                        "predicted_realized_tau_log_sigma": float(item_pred_realized_tau_log_sigma),
                     }
                 )
                 sample_index += 1
@@ -178,8 +211,38 @@ def main() -> None:
     pred_delta_e_np = pred_reward_sum_np / reward_scale
     true_delta_e_np = true_reward_sum_np / reward_scale
     pred_tau_np = np.asarray(pred_tau, dtype=np.float64)
+    pred_realized_tau_np = np.asarray(pred_realized_tau, dtype=np.float64)
+    pred_realized_tau_mu_np = np.asarray(pred_realized_tau_mu, dtype=np.float64)
+    pred_realized_tau_log_sigma_np = np.asarray(pred_realized_tau_log_sigma, dtype=np.float64)
+    pred_realized_tau_distribution_mean_np = np.exp(
+        np.clip(
+            pred_realized_tau_mu_np + 0.5 * np.exp(2.0 * pred_realized_tau_log_sigma_np),
+            a_min=-60.0,
+            a_max=60.0,
+        )
+    )
     true_tau_exp_np = np.asarray(true_tau_exp, dtype=np.float64)
     true_tau_real_np = np.asarray(true_tau_real, dtype=np.float64)
+
+    if realized_tau_source == "realized_duration_head":
+        realized_distribution_summary = {
+            "available": True,
+            "prediction_source": realized_tau_source,
+            **mod._compute_lognormal_distribution_metrics(
+                pred_realized_tau_mu_np,
+                pred_realized_tau_log_sigma_np,
+                true_tau_real_np,
+            ),
+            "traditional_mean": float(np.mean(true_tau_real_np)),
+            "predicted_median_mean": float(np.mean(pred_realized_tau_np)),
+            "predicted_mean": float(np.mean(pred_realized_tau_distribution_mean_np)),
+        }
+    else:
+        realized_distribution_summary = {
+            "available": False,
+            "prediction_source": realized_tau_source,
+            "reason": "checkpoint_missing_realized_duration_head",
+        }
 
     summary = {
         "checkpoint": str(checkpoint_path),
@@ -190,6 +253,11 @@ def main() -> None:
         "cache_signature": cache_signature,
         "dataset_stats": dataset_stats.get(args.split, {}),
         "teacher_source": "traditional_kmc_segment_cache",
+        "time_heads": {
+            "expected_tau_head": True,
+            "realized_tau_head_loaded": bool(getattr(model, "realized_tau_head_loaded", True)),
+            "realized_tau_source": realized_tau_source,
+        },
         "reward_sum": _compute_metrics(pred_reward_sum_np, true_reward_sum_np),
         "delta_e": _compute_metrics(pred_delta_e_np, true_delta_e_np),
         "tau_expected": {
@@ -199,11 +267,14 @@ def main() -> None:
             "predicted_mean": float(np.mean(pred_tau_np)),
         },
         "tau_realized": {
-            **_compute_metrics(pred_tau_np, true_tau_real_np),
-            **_compute_log_metrics(pred_tau_np, true_tau_real_np),
+            **_compute_metrics(pred_realized_tau_np, true_tau_real_np),
+            **_compute_log_metrics(pred_realized_tau_np, true_tau_real_np),
             "traditional_mean": float(np.mean(true_tau_real_np)),
-            "predicted_mean": float(np.mean(pred_tau_np)),
+            "predicted_median": float(np.mean(pred_realized_tau_np)),
+            "predicted_mean": float(np.mean(pred_realized_tau_distribution_mean_np)),
+            "prediction_source": realized_tau_source,
         },
+        "tau_realized_distribution": realized_distribution_summary,
         "traditional_energy": {
             "reward_sum_mean": float(np.mean(true_reward_sum_np)),
             "delta_e_mean": float(np.mean(true_delta_e_np)),
@@ -248,6 +319,19 @@ def main() -> None:
         f"mae={summary['tau_realized']['mae']:.6e}, log_mae={summary['tau_realized']['log_mae']:.4f}, "
         f"log_corr={summary['tau_realized']['log_corr']:.4f}, scale_ratio={summary['tau_realized']['scale_ratio']:.2f}"
     )
+    if summary["tau_realized_distribution"].get("available"):
+        print(
+            "Realized-time distribution: "
+            f"nll={summary['tau_realized_distribution']['nll']:.4f}, "
+            f"coverage68={summary['tau_realized_distribution']['coverage_68']:.4f}, "
+            f"coverage95={summary['tau_realized_distribution']['coverage_95']:.4f}, "
+            f"pit_ks={summary['tau_realized_distribution']['pit_ks']:.4f}"
+        )
+    else:
+        print(
+            "Realized-time distribution: unavailable "
+            f"({summary['tau_realized_distribution'].get('reason', 'unknown reason')})"
+        )
     if summary["sample_preview"]:
         print("Sample preview:")
         for row in summary["sample_preview"]:

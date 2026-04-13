@@ -366,6 +366,51 @@ def _build_candidate_positions(env: MacroKMCEnv, horizon_k: int, max_seed_vacanc
     return ranked[:max_candidate_sites], depth_map, seeds
 
 
+def _augment_candidate_positions_with_teacher_path(
+    *,
+    candidate_positions: list[tuple[int, int, int]],
+    depth_map: dict[tuple[int, int, int], int],
+    seeds: np.ndarray,
+    touched_positions: set[tuple[int, int, int]],
+    box: np.ndarray,
+    nn1: np.ndarray,
+    horizon_k: int,
+    max_candidate_sites: int,
+    teacher_neighbor_depth: int,
+) -> tuple[list[tuple[int, int, int]], dict[tuple[int, int, int], int], np.ndarray]:
+    if not touched_positions:
+        return candidate_positions, depth_map, seeds
+
+    merged_depth = dict(depth_map)
+    frontier = set(touched_positions)
+    for pos in frontier:
+        merged_depth[pos] = min(merged_depth.get(pos, horizon_k + teacher_neighbor_depth), 0)
+    for depth in range(1, max(int(teacher_neighbor_depth), 0) + 1):
+        next_frontier: set[tuple[int, int, int]] = set()
+        for pos in frontier:
+            for nxt in _one_hop_neighbors(pos, nn1, box):
+                if nxt not in merged_depth or depth < merged_depth[nxt]:
+                    merged_depth[nxt] = depth
+                    next_frontier.add(nxt)
+        frontier = next_frontier
+        if not frontier:
+            break
+
+    touched_seed_array = np.asarray(sorted(touched_positions), dtype=np.int32)
+    all_seeds = np.concatenate([seeds, touched_seed_array], axis=0) if seeds.size > 0 else touched_seed_array
+
+    def rank_key(pos: tuple[int, int, int]) -> tuple[int, int, float]:
+        pos_arr = np.asarray(pos, dtype=np.float32)
+        min_dist = min(
+            np.linalg.norm(_periodic_offset(pos_arr, seed.astype(np.float32), box.astype(np.float32)))
+            for seed in all_seeds
+        )
+        return (0 if pos in touched_positions else 1, merged_depth.get(pos, horizon_k + teacher_neighbor_depth + 1), float(min_dist))
+
+    ranked = sorted(merged_depth.keys(), key=rank_key)
+    return ranked[:max_candidate_sites], merged_depth, all_seeds
+
+
 def _build_patch_features(
     *,
     candidate_positions: list[tuple[int, int, int]],
@@ -412,6 +457,8 @@ def _collect_segments(
     rng: np.random.Generator,
     max_attempt_multiplier: int = 20,
     include_stepwise_path_summary: bool = True,
+    max_segments_per_rollout: int = 50,
+    teacher_candidate_neighbor_depth: int = 1,
     teacher_mode: str = "kmc",
     neural_teacher: Optional[torch.nn.Module] = None,
     neural_teacher_device: str = "cpu",
@@ -431,7 +478,6 @@ def _collect_segments(
         "candidate_size_sum": 0.0,
     }
     progress_every = max(50, num_segments // 10)
-    max_segments_per_rollout = 50
     max_stall_attempts = 16
     obs = env.reset()
     segments_since_reset = 0
@@ -487,64 +533,28 @@ def _collect_segments(
             segments_since_reset = 0
             stall_attempts = 0
             continue
+        candidate_positions, depth_map, seeds = _augment_candidate_positions_with_teacher_path(
+            candidate_positions=candidate_positions,
+            depth_map=depth_map,
+            seeds=seeds,
+            touched_positions=touched_positions,
+            box=np.asarray(env.env.dims, dtype=np.int32),
+            nn1=np.asarray(env.env.NN1, dtype=np.int32),
+            horizon_k=horizon_k,
+            max_candidate_sites=max_candidate_sites,
+            teacher_neighbor_depth=teacher_candidate_neighbor_depth,
+        )
         candidate_set = set(candidate_positions)
         if not touched_positions.issubset(candidate_set):
-            if teacher_mode == "neural":
-                # Neural teacher paths may escape pre-built candidate set.
-                # Rebuild candidate set centered on actually touched positions.
-                box = np.asarray(env.env.dims, dtype=np.int32)
-                nn1 = np.asarray(env.env.NN1, dtype=np.int32)
-                posthoc_depth: dict[tuple[int, int, int], int] = {}
-                posthoc_frontier = set(touched_positions)
-                for pos in posthoc_frontier:
-                    posthoc_depth[pos] = 0
-                for depth in range(1, horizon_k + 1):
-                    next_frontier: set[tuple[int, int, int]] = set()
-                    for pos in posthoc_frontier:
-                        for nxt in _one_hop_neighbors(pos, nn1, box):
-                            if nxt not in posthoc_depth:
-                                posthoc_depth[nxt] = depth
-                                next_frontier.add(nxt)
-                    posthoc_frontier = next_frontier
-                    if not posthoc_frontier:
-                        break
-                merged_depth: dict[tuple[int, int, int], int] = {}
-                for pos, d in depth_map.items():
-                    merged_depth[pos] = d
-                for pos, d in posthoc_depth.items():
-                    if pos not in merged_depth or d < merged_depth[pos]:
-                        merged_depth[pos] = d
-                posthoc_seeds = np.asarray(sorted(touched_positions), dtype=np.int32)
-                all_seeds = np.concatenate([seeds, posthoc_seeds], axis=0) if seeds.size > 0 else posthoc_seeds
-
-                def rank_key_merged(pos: tuple[int, int, int]) -> tuple[int, float]:
-                    pos_arr = np.asarray(pos, dtype=np.float32)
-                    min_dist = min(np.linalg.norm(_periodic_offset(pos_arr, s.astype(np.float32), box.astype(np.float32))) for s in all_seeds)
-                    return merged_depth.get(pos, horizon_k + 1), float(min_dist)
-
-                candidate_positions = sorted(merged_depth.keys(), key=rank_key_merged)[:max_candidate_sites]
-                depth_map = merged_depth
-                seeds = all_seeds[:max_seed_vacancies]
-                candidate_set = set(candidate_positions)
-                if not touched_positions.issubset(candidate_set):
-                    stats["skipped_uncovered"] += 1
-                    obs = next_obs
-                    stall_attempts += 1
-                    if stall_attempts >= max_stall_attempts:
-                        env, obs = restart_env(env)
-                        segments_since_reset = 0
-                        stall_attempts = 0
-                    continue
+            stats["skipped_uncovered"] += 1
+            stall_attempts += 1
+            if stall_attempts >= max_stall_attempts:
+                env, obs = restart_env(env)
+                segments_since_reset = 0
+                stall_attempts = 0
             else:
-                stats["skipped_uncovered"] += 1
-                stall_attempts += 1
-                if stall_attempts >= max_stall_attempts:
-                    env, obs = restart_env(env)
-                    segments_since_reset = 0
-                    stall_attempts = 0
-                else:
-                    obs = next_obs
-                continue
+                obs = next_obs
+            continue
 
         end_vacancies = env.env.get_vacancy_array().astype(np.int32)
         end_cu = env.env.get_cu_array().astype(np.int32)
@@ -616,7 +626,7 @@ def _collect_segments(
             )
         stall_attempts = 0
         segments_since_reset += 1
-        if segments_since_reset >= max_segments_per_rollout:
+        if max_segments_per_rollout > 0 and segments_since_reset >= max_segments_per_rollout:
             env, obs = restart_env(env)
             segments_since_reset = 0
         else:
@@ -727,6 +737,76 @@ def _compute_metrics(pred: np.ndarray, target: np.ndarray) -> dict[str, float]:
     return {"mae": mae, "rmse": rmse, "corr": corr}
 
 
+def _compute_log_metrics(pred: np.ndarray, target: np.ndarray) -> dict[str, float]:
+    eps = 1e-12
+    pred = np.clip(np.asarray(pred, dtype=np.float64), eps, None)
+    target = np.clip(np.asarray(target, dtype=np.float64), eps, None)
+    log_pred = np.log(pred)
+    log_target = np.log(target)
+    log_mae = float(np.mean(np.abs(log_pred - log_target)))
+    log_rmse = float(np.sqrt(np.mean((log_pred - log_target) ** 2)))
+    if pred.size > 1 and np.std(log_pred) > 0 and np.std(log_target) > 0:
+        log_corr = float(np.corrcoef(log_pred, log_target)[0, 1])
+    else:
+        log_corr = 0.0
+    scale_ratio = float(np.mean(pred / target))
+    return {
+        "log_mae": log_mae,
+        "log_rmse": log_rmse,
+        "log_corr": log_corr,
+        "scale_ratio": scale_ratio,
+    }
+
+
+def _compute_lognormal_distribution_metrics(mu: np.ndarray, log_sigma: np.ndarray, target: np.ndarray) -> dict[str, float]:
+    eps = 1e-12
+    mu = np.asarray(mu, dtype=np.float64)
+    log_sigma = np.asarray(log_sigma, dtype=np.float64)
+    target = np.clip(np.asarray(target, dtype=np.float64), eps, None)
+    point_pred = np.exp(mu)
+    linear_metrics = _compute_metrics(point_pred, target)
+    log_metrics = _compute_log_metrics(point_pred, target)
+
+    mu_t = torch.as_tensor(mu, dtype=torch.float64)
+    log_sigma_t = torch.as_tensor(log_sigma, dtype=torch.float64).clamp(min=-6.0, max=2.0)
+    sigma_t = torch.exp(log_sigma_t).clamp(min=1e-6)
+    target_t = torch.as_tensor(target, dtype=torch.float64)
+    log_target_t = torch.log(target_t)
+    z = (log_target_t - mu_t) / sigma_t
+    nll = (log_target_t + log_sigma_t + 0.5 * math.log(2.0 * math.pi) + 0.5 * z.square()).mean()
+    pit = 0.5 * (1.0 + torch.erf(z / math.sqrt(2.0)))
+    pit_sorted = torch.sort(pit).values
+    if pit_sorted.numel() > 0:
+        count = pit_sorted.numel()
+        empirical_hi = torch.arange(1, count + 1, dtype=torch.float64) / float(count)
+        empirical_lo = torch.arange(0, count, dtype=torch.float64) / float(count)
+        pit_ks = float(torch.max(torch.maximum((empirical_hi - pit_sorted).abs(), (pit_sorted - empirical_lo).abs())).item())
+        pit_mean = float(pit.mean().item())
+        pit_var = float(pit.var(unbiased=False).item())
+        coverage_68 = float((z.abs() <= 1.0).double().mean().item())
+        coverage_95 = float((z.abs() <= 1.959963984540054).double().mean().item())
+        mean_log_sigma = float(log_sigma_t.mean().item())
+    else:
+        pit_ks = 0.0
+        pit_mean = 0.5
+        pit_var = 0.0
+        coverage_68 = 0.0
+        coverage_95 = 0.0
+        mean_log_sigma = 0.0
+    return {
+        **linear_metrics,
+        **log_metrics,
+        "nll": float(nll.item()),
+        "coverage_68": coverage_68,
+        "coverage_95": coverage_95,
+        "pit_mean": pit_mean,
+        "pit_var": pit_var,
+        "pit_ks": pit_ks,
+        "mean_log_sigma": mean_log_sigma,
+        "predicted_median_mean": float(np.mean(point_pred)) if point_pred.size else 0.0,
+    }
+
+
 def _focal_bce_with_logits(logits: torch.Tensor, targets: torch.Tensor, alpha: float = 0.75, gamma: float = 2.0) -> torch.Tensor:
     probs = torch.sigmoid(logits)
     ce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
@@ -763,9 +843,14 @@ def _selection_score(val_metrics: dict[str, float], dataset_stats: dict[str, obj
     coverage_penalty = max(0.0, 0.9 - float(dataset_stats.get("val", {}).get("coverage", 0.0)))
     projected_global_l1 = float(val_metrics.get("projected_global_l1", 0.0))
     unchanged_vacancy_copy_acc = float(val_metrics.get("unchanged_vacancy_copy_acc", 1.0))
+    reward_corr = val_metrics.get("reward_corr")
+    reward_corr_penalty = 0.0
+    if reward_corr is not None:
+        reward_corr_penalty = 0.5 * max(0.0, 0.45 - float(reward_corr))
     return (
         val_metrics["tau_log_mae"]
         + 0.5 * val_metrics["reward_mae"]
+        + reward_corr_penalty
         + 0.5 * max(0.0, 1.0 - val_metrics["change_topk_f1"])
         + 0.5 * max(0.0, 1.0 - val_metrics["projected_change_f1"])
         + max(0.0, 1.0 - val_metrics["projected_changed_type_acc"])
@@ -774,6 +859,75 @@ def _selection_score(val_metrics: dict[str, float], dataset_stats: dict[str, obj
         + 2.0 * val_metrics["reachability_violation_rate"]
         + coverage_penalty
     )
+
+
+def _predict_reward_and_duration_outputs(
+    model: nn.Module,
+    global_latent: torch.Tensor,
+    predicted_next_global: torch.Tensor,
+    path_latent: torch.Tensor,
+    global_summary: torch.Tensor,
+    horizon_k: torch.Tensor,
+    *,
+    detach_duration_inputs: bool = False,
+    patch_latent: torch.Tensor | None = None,
+    change_logits: torch.Tensor | None = None,
+    type_logits: torch.Tensor | None = None,
+    current_types: torch.Tensor | None = None,
+    candidate_mask: torch.Tensor | None = None,
+) -> dict[str, torch.Tensor]:
+    if hasattr(model, "predict_reward_and_durations"):
+        outputs = model.predict_reward_and_durations(
+            global_latent,
+            predicted_next_global,
+            path_latent,
+            global_summary,
+            horizon_k,
+            detach_duration_inputs=detach_duration_inputs,
+            patch_latent=patch_latent,
+            change_logits=change_logits,
+            type_logits=type_logits,
+            current_types=current_types,
+            candidate_mask=candidate_mask,
+        )
+        realized_tau_available = bool(getattr(model, "realized_tau_head_loaded", True))
+        if not realized_tau_available:
+            outputs = dict(outputs)
+            outputs["realized_tau_mu"] = outputs["expected_tau_mu"]
+            outputs["realized_tau_log_sigma"] = outputs["expected_tau_log_sigma"]
+        outputs["realized_tau_available"] = realized_tau_available
+        return outputs
+    try:
+        reward, tau_mu, tau_log_sigma, gate_logit = model.predict_reward_and_duration(
+            global_latent,
+            predicted_next_global,
+            path_latent,
+            global_summary,
+            horizon_k,
+            detach_duration_inputs=detach_duration_inputs,
+            patch_latent=patch_latent,
+            change_logits=change_logits,
+            type_logits=type_logits,
+            current_types=current_types,
+            candidate_mask=candidate_mask,
+        )
+    except TypeError:
+        reward, tau_mu, tau_log_sigma, gate_logit = model.predict_reward_and_duration(
+            global_latent,
+            predicted_next_global,
+            path_latent,
+            global_summary,
+            horizon_k,
+        )
+    return {
+        "reward": reward,
+        "expected_tau_mu": tau_mu,
+        "expected_tau_log_sigma": tau_log_sigma,
+        "realized_tau_mu": tau_mu,
+        "realized_tau_log_sigma": tau_log_sigma,
+        "gate_logit": gate_logit,
+        "realized_tau_available": False,
+    }
 
 
 def _soft_typed_change_count(
@@ -1046,6 +1200,10 @@ def _evaluate(model: MacroDreamerEditModel, loader: DataLoader, device: str, max
     reward_true = []
     tau_pred = []
     tau_true = []
+    realized_tau_mu_pred = []
+    realized_tau_log_sigma_pred = []
+    realized_tau_true = []
+    realized_tau_available = True
     changed_f1_scores = []
     change_topk_f1_scores = []
     changed_type_acc_scores = []
@@ -1089,14 +1247,33 @@ def _evaluate(model: MacroDreamerEditModel, loader: DataLoader, device: str, max
                 horizon_k=tensors["horizon_k"],
                 current_types=tensors["current_types"],
             )
-            reward_hat, tau_mu, _tau_log_sigma, gate_logit = model.predict_reward_and_duration(
-                global_latent, next_pred, path_latent, tensors["global_summary"], tensors["horizon_k"]
+            duration_outputs = _predict_reward_and_duration_outputs(
+                model,
+                global_latent,
+                next_pred,
+                path_latent,
+                tensors["global_summary"],
+                tensors["horizon_k"],
+                patch_latent=patch_latent,
+                change_logits=change_logits,
+                type_logits=raw_type_logits,
+                current_types=tensors["current_types"],
+                candidate_mask=tensors["candidate_mask"],
             )
+            reward_hat = duration_outputs["reward"]
+            tau_mu = duration_outputs["expected_tau_mu"]
+            realized_tau_mu = duration_outputs["realized_tau_mu"]
+            realized_tau_log_sigma = duration_outputs["realized_tau_log_sigma"]
+            gate_logit = duration_outputs["gate_logit"]
+            realized_tau_available = realized_tau_available and bool(duration_outputs.get("realized_tau_available", True))
             gated_reward = reward_hat * torch.sigmoid(gate_logit)
             reward_pred.extend(gated_reward.cpu().numpy().tolist())
             reward_true.extend(tensors["reward_sum"].cpu().numpy().tolist())
             tau_pred.extend(torch.exp(tau_mu).cpu().numpy().tolist())
             tau_true.extend(tensors["tau_exp"].cpu().numpy().tolist())
+            realized_tau_mu_pred.extend(realized_tau_mu.cpu().numpy().tolist())
+            realized_tau_log_sigma_pred.extend(realized_tau_log_sigma.cpu().numpy().tolist())
+            realized_tau_true.extend(tensors["tau_real"].cpu().numpy().tolist())
 
             raw_change = (torch.sigmoid(change_logits) > 0.5).float() * tensors["candidate_mask"]
             target_change = tensors["changed_mask"]
@@ -1195,16 +1372,43 @@ def _evaluate(model: MacroDreamerEditModel, loader: DataLoader, device: str, max
                 projected_change_f1_scores.append(float(proj_f1))
 
     reward_metrics = _compute_metrics(np.asarray(reward_pred), np.asarray(reward_true))
-    tau_metrics = _compute_metrics(np.log(np.asarray(tau_pred) + 1e-12), np.log(np.asarray(tau_true) + 1e-12))
-    tau_scale = float(np.mean(np.asarray(tau_pred) / np.maximum(np.asarray(tau_true), 1e-12)))
+    tau_metrics = _compute_log_metrics(np.asarray(tau_pred), np.asarray(tau_true))
+    realized_tau_metrics = _compute_lognormal_distribution_metrics(
+        np.asarray(realized_tau_mu_pred),
+        np.asarray(realized_tau_log_sigma_pred),
+        np.asarray(realized_tau_true),
+    )
+    if not realized_tau_available:
+        realized_tau_metrics["nll"] = 0.0
+        realized_tau_metrics["coverage_68"] = 0.0
+        realized_tau_metrics["coverage_95"] = 0.0
+        realized_tau_metrics["pit_mean"] = 0.0
+        realized_tau_metrics["pit_var"] = 0.0
+        realized_tau_metrics["pit_ks"] = 0.0
+        realized_tau_metrics["mean_log_sigma"] = 0.0
     return {
         "reward_mae": reward_metrics["mae"],
         "reward_rmse": reward_metrics["rmse"],
         "reward_corr": reward_metrics["corr"],
-        "tau_log_mae": tau_metrics["mae"],
-        "tau_log_rmse": tau_metrics["rmse"],
-        "tau_log_corr": tau_metrics["corr"],
-        "tau_scale_ratio": tau_scale,
+        "tau_log_mae": tau_metrics["log_mae"],
+        "tau_log_rmse": tau_metrics["log_rmse"],
+        "tau_log_corr": tau_metrics["log_corr"],
+        "tau_scale_ratio": tau_metrics["scale_ratio"],
+        "realized_tau_available": float(realized_tau_available),
+        "realized_tau_mae": realized_tau_metrics["mae"],
+        "realized_tau_rmse": realized_tau_metrics["rmse"],
+        "realized_tau_corr": realized_tau_metrics["corr"],
+        "realized_tau_log_mae": realized_tau_metrics["log_mae"],
+        "realized_tau_log_rmse": realized_tau_metrics["log_rmse"],
+        "realized_tau_log_corr": realized_tau_metrics["log_corr"],
+        "realized_tau_scale_ratio": realized_tau_metrics["scale_ratio"],
+        "realized_tau_nll": realized_tau_metrics["nll"],
+        "realized_tau_coverage_68": realized_tau_metrics["coverage_68"],
+        "realized_tau_coverage_95": realized_tau_metrics["coverage_95"],
+        "realized_tau_pit_mean": realized_tau_metrics["pit_mean"],
+        "realized_tau_pit_var": realized_tau_metrics["pit_var"],
+        "realized_tau_pit_ks": realized_tau_metrics["pit_ks"],
+        "realized_tau_mean_log_sigma": realized_tau_metrics["mean_log_sigma"],
         "change_f1": float(np.mean(changed_f1_scores)) if changed_f1_scores else 0.0,
         "change_topk_f1": float(np.mean(change_topk_f1_scores)) if change_topk_f1_scores else 0.0,
         "changed_type_acc": float(np.mean(changed_type_acc_scores)) if changed_type_acc_scores else 0.0,
@@ -1257,6 +1461,9 @@ def _train_epoch(
         "tau": 0.0,
         "tau_post": 0.0,
         "tau_prior": 0.0,
+        "realized_tau": 0.0,
+        "realized_tau_post": 0.0,
+        "realized_tau_prior": 0.0,
         "tau_post_scale": 0.0,
         "reward": 0.0,
         "latent": 0.0,
@@ -1315,22 +1522,46 @@ def _train_epoch(
             horizon_k=tensors["horizon_k"],
             current_types=tensors["current_types"],
         )
-        reward_hat, tau_mu, tau_log_sigma, gate_logit = model.predict_reward_and_duration(
+        duration_outputs = _predict_reward_and_duration_outputs(
+            model,
             global_latent,
             next_pred,
             post_c,
             tensors["global_summary"],
             tensors["horizon_k"],
             detach_duration_inputs=True,
+            patch_latent=patch_latent,
+            change_logits=change_logits,
+            type_logits=raw_type_logits,
+            current_types=tensors["current_types"],
+            candidate_mask=tensors["candidate_mask"],
         )
-        reward_hat_prior, tau_mu_prior, tau_log_sigma_prior, gate_logit_prior = model.predict_reward_and_duration(
+        prior_duration_outputs = _predict_reward_and_duration_outputs(
+            model,
             global_latent,
             next_pred_prior,
             prior_c,
             tensors["global_summary"],
             tensors["horizon_k"],
             detach_duration_inputs=True,
+            patch_latent=patch_latent,
+            change_logits=change_logits_prior,
+            type_logits=raw_type_logits_prior,
+            current_types=tensors["current_types"],
+            candidate_mask=tensors["candidate_mask"],
         )
+        reward_hat = duration_outputs["reward"]
+        tau_mu = duration_outputs["expected_tau_mu"]
+        tau_log_sigma = duration_outputs["expected_tau_log_sigma"]
+        realized_tau_mu = duration_outputs["realized_tau_mu"]
+        realized_tau_log_sigma = duration_outputs["realized_tau_log_sigma"]
+        gate_logit = duration_outputs["gate_logit"]
+        reward_hat_prior = prior_duration_outputs["reward"]
+        tau_mu_prior = prior_duration_outputs["expected_tau_mu"]
+        tau_log_sigma_prior = prior_duration_outputs["expected_tau_log_sigma"]
+        realized_tau_mu_prior = prior_duration_outputs["realized_tau_mu"]
+        realized_tau_log_sigma_prior = prior_duration_outputs["realized_tau_log_sigma"]
+        gate_logit_prior = prior_duration_outputs["gate_logit"]
         if compute_proj:
             projected_types, _, transport_cost, reachability_violation = project_types_by_inventory(
                 current_types=tensors["current_types"],
@@ -1431,17 +1662,16 @@ def _train_epoch(
         prior_edit_loss = prior_edit["mask"] + 0.1 * prior_edit["count"] + (0.5 * prior_proj_mask_loss if compute_proj else 0.0) + prior_edit["type"]
 
         tau_loss = lognormal_nll(tensors["tau_exp"], tau_mu, tau_log_sigma).mean()
-        # Gate-aware reward loss: binary gate classifies zero vs nonzero dE,
-        # then magnitude loss only on nonzero-dE segments
         reward_nonzero_target = (tensors["reward_sum"].abs() > 1e-6).float()
+        gated_reward = reward_hat * torch.sigmoid(gate_logit)
         gate_loss = F.binary_cross_entropy_with_logits(gate_logit, reward_nonzero_target)
+        reward_gated_loss = F.smooth_l1_loss(gated_reward, tensors["reward_sum"])
         nonzero_mask = reward_nonzero_target > 0.5
         if nonzero_mask.any():
-            # Decoupled: train magnitude head directly on raw reward_hat (gate only applied at inference)
             reward_magnitude_loss = F.smooth_l1_loss(reward_hat[nonzero_mask], tensors["reward_sum"][nonzero_mask])
         else:
             reward_magnitude_loss = torch.tensor(0.0, device=device)
-        reward_loss = gate_loss + reward_magnitude_weight * reward_magnitude_loss
+        reward_loss = reward_gated_loss + 0.25 * gate_loss + 0.5 * reward_magnitude_weight * reward_magnitude_loss
         latent_loss = F.smooth_l1_loss(next_pred, next_global)
         if compute_proj:
             proj_state_loss = _projected_state_alignment_loss(
@@ -1468,19 +1698,26 @@ def _train_epoch(
         prior_latent_loss = F.smooth_l1_loss(next_pred_prior, next_global) + 0.5 * prior_proj_state_loss
         path_loss = kl_divergence_diag_gaussian(post_mu, post_logvar, prior_mu, prior_logvar).mean()
         prior_tau_loss = lognormal_nll(tensors["tau_exp"], tau_mu_prior, tau_log_sigma_prior).mean()
+        realized_tau_loss = lognormal_nll(tensors["tau_real"], realized_tau_mu, realized_tau_log_sigma).mean()
+        prior_realized_tau_loss = lognormal_nll(tensors["tau_real"], realized_tau_mu_prior, realized_tau_log_sigma_prior).mean()
+        gated_reward_prior = reward_hat_prior * torch.sigmoid(gate_logit_prior)
         prior_gate_loss = F.binary_cross_entropy_with_logits(gate_logit_prior, reward_nonzero_target)
+        prior_reward_gated_loss = F.smooth_l1_loss(gated_reward_prior, tensors["reward_sum"])
         if nonzero_mask.any():
-            # Decoupled: train prior magnitude head directly on raw reward_hat_prior
             prior_reward_magnitude_loss = F.smooth_l1_loss(reward_hat_prior[nonzero_mask], tensors["reward_sum"][nonzero_mask])
         else:
             prior_reward_magnitude_loss = torch.tensor(0.0, device=device)
-        prior_reward_loss = prior_gate_loss + reward_magnitude_weight * prior_reward_magnitude_loss
+        prior_reward_loss = prior_reward_gated_loss + 0.25 * prior_gate_loss + 0.5 * reward_magnitude_weight * prior_reward_magnitude_loss
         if tau_supervision_mode == "posterior_only":
             combined_tau_loss = tau_loss
+            combined_realized_tau_loss = realized_tau_loss
             effective_tau_post_scale = 1.0
         else:
             combined_tau_loss = prior_tau_loss
+            combined_realized_tau_loss = prior_realized_tau_loss
             effective_tau_post_scale = 0.0
+
+        prior_reward_weight = float(weights.get("prior_reward", 0.5 * weights["reward"]))
 
         main_loss = (
             weights["mask"] * mask_loss
@@ -1492,13 +1729,14 @@ def _train_epoch(
             + weights["path"] * path_loss
             + weights["prior_edit"] * prior_edit_loss
             + weights["prior_latent"] * prior_latent_loss
-            + 0.5 * weights["reward"] * prior_reward_loss
+            + prior_reward_weight * prior_reward_loss
         )
-        tau_total_loss = weights["tau"] * combined_tau_loss
-        loss = main_loss + tau_total_loss
+        realized_tau_weight = float(weights.get("realized_tau", 0.0))
+        time_total_loss = weights["tau"] * combined_tau_loss + realized_tau_weight * combined_realized_tau_loss
+        loss = main_loss + time_total_loss
         optimizer.zero_grad()
         main_loss.backward()
-        tau_total_loss.backward()
+        time_total_loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
         optimizer.step()
 
@@ -1515,6 +1753,9 @@ def _train_epoch(
         logs["tau"] += float(combined_tau_loss.item()) * batch_size
         logs["tau_post"] += float(tau_loss.item()) * batch_size
         logs["tau_prior"] += float(prior_tau_loss.item()) * batch_size
+        logs["realized_tau"] += float(combined_realized_tau_loss.item()) * batch_size
+        logs["realized_tau_post"] += float(realized_tau_loss.item()) * batch_size
+        logs["realized_tau_prior"] += float(prior_realized_tau_loss.item()) * batch_size
         logs["tau_post_scale"] += float(effective_tau_post_scale) * batch_size
         logs["reward"] += float(reward_loss.item()) * batch_size
         logs["latent"] += float(latent_loss.item()) * batch_size
@@ -1526,6 +1767,8 @@ def _train_epoch(
 
     if count == 0:
         return logs
+    if float(weights.get("realized_tau", 0.0)) > 0.0:
+        setattr(model, "realized_tau_head_loaded", True)
     return {key: value / count for key, value in logs.items()}
 
 
@@ -1538,11 +1781,15 @@ def _initialize_output_heads(model: MacroDreamerEditModel, train_samples: list[M
         return
     reward_mean = float(np.mean([sample.reward_sum for sample in train_samples]))
     tau_residuals = []
+    realized_tau_residuals = []
     for sample in train_samples:
         baseline_log_tau = math.log(max(int(sample.horizon_k), 1)) - float(sample.global_summary[10])
         tau_residuals.append(math.log(sample.tau_exp + 1e-12) - baseline_log_tau)
+        realized_tau_residuals.append(math.log(sample.tau_real + 1e-12) - baseline_log_tau)
     tau_residual_mean = float(np.mean(tau_residuals))
     tau_residual_std = max(float(np.std(tau_residuals)), 0.2)
+    realized_tau_residual_mean = float(np.mean(realized_tau_residuals))
+    realized_tau_residual_std = max(float(np.std(realized_tau_residuals)), 0.35)
     valid_site_count = float(np.sum([sample.candidate_mask.sum() for sample in train_samples]))
     changed_site_count = float(np.sum([sample.changed_mask.sum() for sample in train_samples]))
     changed_rate = changed_site_count / max(valid_site_count, 1.0)
@@ -1565,6 +1812,10 @@ def _initialize_output_heads(model: MacroDreamerEditModel, train_samples: list[M
         model.duration_head[-1].weight.zero_()
         model.duration_head[-1].bias[0] = tau_residual_mean
         model.duration_head[-1].bias[1] = float(np.log(tau_residual_std))
+        model.realized_duration_head[-1].weight.zero_()
+        model.realized_duration_head[-1].bias[0] = realized_tau_residual_mean
+        model.realized_duration_head[-1].bias[1] = float(np.log(realized_tau_residual_std))
+        model.realized_tau_head_loaded = True
 
 
 def parse_args() -> argparse.Namespace:
@@ -1617,9 +1868,14 @@ def parse_args() -> argparse.Namespace:
                         help="Weight for proj_global_l1 in the selection score formula (default: 80.0). Lower values reduce proj_l1 dominance in model selection.")
     parser.add_argument("--reward_weight", type=float, default=0.5,
                         help="Training loss weight for reward prediction (default: 0.5). Higher values strengthen energy/reward prediction.")
+    parser.add_argument("--prior_reward_weight", type=float, default=0.5,
+                        help="Training loss weight for prior-side reward prediction (default: 0.5). Higher values reduce posterior/prior reward mismatch at inference.")
     parser.add_argument("--reward_magnitude_weight", type=float, default=1.0,
                         help="Extra multiplier for reward magnitude loss relative to gate loss (default: 1.0). "
                              "Higher values prioritise predicting correct dE amplitude over zero/nonzero classification.")
+    parser.add_argument("--realized_tau_weight", type=float, default=0.25,
+                        help="Auxiliary loss weight for the tau_real lognormal distribution head (default: 0.25). "
+                             "tau_exp remains the primary time-supervision target.")
     parser.add_argument("--teacher_mode", type=str, default="kmc", choices=["kmc", "neural"],
                         help="Teacher action sampling mode: 'kmc' = rate-proportional, 'neural' = learned policy.")
     parser.add_argument("--neural_teacher_path", type=str, default=None,
@@ -1633,12 +1889,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval_freq", type=int, default=5)
     parser.add_argument("--save_freq", type=int, default=10)
     parser.add_argument("--num_workers", type=int, default=0)
+    parser.add_argument("--max_segments_per_rollout", type=int, default=50,
+                        help="Maximum number of accepted macro segments to draw from one teacher rollout before rebuilding the env. Use larger values for more natural long trajectories; 0 disables forced resets.")
+    parser.add_argument("--teacher_candidate_neighbor_depth", type=int, default=1,
+                        help="During training-data construction, expand the candidate set around teacher-touched sites by this many 1-hop shells.")
     return parser.parse_args()
 
 
 def _dataset_signature(args: argparse.Namespace) -> dict[str, object]:
     return {
-        "dataset_version": 7,
+        "dataset_version": 8,
         "seed": int(args.seed),
         "lattice_size": list(args.lattice_size),
         "cu_density": float(args.cu_density),
@@ -1660,6 +1920,8 @@ def _dataset_signature(args: argparse.Namespace) -> dict[str, object]:
         "teacher_mode": str(getattr(args, "teacher_mode", "kmc")),
         "neural_teacher_temperature": float(getattr(args, "neural_teacher_temperature", 1.0)),
         "neural_teacher_epsilon": float(getattr(args, "neural_teacher_epsilon", 0.0)),
+        "max_segments_per_rollout": int(getattr(args, "max_segments_per_rollout", 50)),
+        "teacher_candidate_neighbor_depth": int(getattr(args, "teacher_candidate_neighbor_depth", 1)),
     }
 
 
@@ -1725,6 +1987,8 @@ def main() -> None:
             max_candidate_sites=args.max_candidate_sites,
             rng=train_rng,
             include_stepwise_path_summary=include_stepwise_path_summary,
+            max_segments_per_rollout=args.max_segments_per_rollout,
+            teacher_candidate_neighbor_depth=args.teacher_candidate_neighbor_depth,
             teacher_mode=args.teacher_mode,
             neural_teacher=neural_teacher,
             neural_teacher_device=args.device,
@@ -1739,6 +2003,8 @@ def main() -> None:
             max_candidate_sites=args.max_candidate_sites,
             rng=val_rng,
             include_stepwise_path_summary=include_stepwise_path_summary,
+            max_segments_per_rollout=args.max_segments_per_rollout,
+            teacher_candidate_neighbor_depth=args.teacher_candidate_neighbor_depth,
             teacher_mode=args.teacher_mode,
             neural_teacher=neural_teacher,
             neural_teacher_device=args.device,
@@ -1775,6 +2041,7 @@ def main() -> None:
         teacher_path_summary_dim=teacher_path_summary_dim(args.segment_k, include_stepwise_features=include_stepwise_path_summary),
         max_macro_k=max(args.segment_k, 16),
     ).to(args.device)
+    model.realized_tau_head_loaded = True
     if not args.resume:
         _initialize_output_heads(model, train_samples)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
@@ -1783,7 +2050,9 @@ def main() -> None:
         "type": 1.0,
         "pair": 0.0,
         "tau": 1.0,
+        "realized_tau": args.realized_tau_weight,
         "reward": args.reward_weight,
+        "prior_reward": args.prior_reward_weight,
         "latent": 0.5,
         "proj": args.proj_weight,
         "path": 0.05,
@@ -1797,6 +2066,7 @@ def main() -> None:
         ckpt = torch.load(args.resume, map_location=args.device, weights_only=False)
         _validate_resume_args(args, ckpt.get("args", {}))
         missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
+        model.realized_tau_head_loaded = not any(key.startswith("realized_duration_head.") for key in missing)
         if missing:
             print(f"Resume: new parameters initialized from scratch: {missing}")
         if unexpected:
@@ -1855,7 +2125,9 @@ def main() -> None:
             f"mask={train_metrics['mask']:.4f} count={train_metrics['count']:.4f} pair={train_metrics['pair']:.4f} proj_mask={train_metrics['proj_mask']:.4f} type={train_metrics['type']:.4f} "
             f"prior_edit={train_metrics['prior_edit']:.4f} "
             f"tau={train_metrics['tau']:.4f} tau_prior={train_metrics['tau_prior']:.4f} "
-            f"tau_post={train_metrics['tau_post']:.4f} tau_post_scale={train_metrics['tau_post_scale']:.2f} reward={train_metrics['reward']:.4f} "
+            f"tau_post={train_metrics['tau_post']:.4f} real_tau={train_metrics['realized_tau']:.4f} "
+            f"real_tau_prior={train_metrics['realized_tau_prior']:.4f} real_tau_post={train_metrics['realized_tau_post']:.4f} "
+            f"tau_post_scale={train_metrics['tau_post_scale']:.2f} reward={train_metrics['reward']:.4f} "
             f"latent={train_metrics['latent']:.4f} proj={train_metrics['proj']:.4f} "
             f"path={train_metrics['path']:.4f} prior_latent={train_metrics['prior_latent']:.4f} "
             f"mask_aux={train_metrics['mask_aux_scale']:.2f} time={elapsed:.1f}s"
@@ -1866,10 +2138,19 @@ def main() -> None:
 
         if epoch % args.eval_freq == 0 or epoch == 1:
             val_metrics = _evaluate(model, val_loader, args.device, max_changed_sites)
+            if val_metrics.get("realized_tau_available", 1.0) >= 0.5:
+                realized_tau_msg = (
+                    f"real_tau_nll={val_metrics['realized_tau_nll']:.4f} "
+                    f"real_tau_log_mae={val_metrics['realized_tau_log_mae']:.4f} "
+                    f"real_tau_cov68={val_metrics['realized_tau_coverage_68']:.4f} "
+                    f"real_tau_pit_ks={val_metrics['realized_tau_pit_ks']:.4f} "
+                )
+            else:
+                realized_tau_msg = "real_tau=unavailable "
             val_msg = (
                 f"  >>> VAL reward_mae={val_metrics['reward_mae']:.4f} reward_corr={val_metrics['reward_corr']:.4f} "
                 f"tau_log_mae={val_metrics['tau_log_mae']:.4f} tau_log_corr={val_metrics['tau_log_corr']:.4f} "
-                f"tau_scale={val_metrics['tau_scale_ratio']:.2f} change_f1={val_metrics['change_f1']:.4f} "
+                f"tau_scale={val_metrics['tau_scale_ratio']:.2f} {realized_tau_msg}change_f1={val_metrics['change_f1']:.4f} "
                 f"change_topk_f1={val_metrics['change_topk_f1']:.4f} proj_change_f1={val_metrics['projected_change_f1']:.4f} "
                 f"chg_type_acc={val_metrics['changed_type_acc']:.4f} proj_chg_type_acc={val_metrics['projected_changed_type_acc']:.4f} "
                 f"pair_fe={val_metrics['raw_vac_to_fe_count']:.2f}/{val_metrics['raw_fe_to_vac_count']:.2f} "

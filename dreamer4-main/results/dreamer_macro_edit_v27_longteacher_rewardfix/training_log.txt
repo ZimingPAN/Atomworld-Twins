@@ -1,0 +1,134 @@
+{"collect_progress": {"samples": 200, "target": 2000, "attempts": 200, "coverage": 1.0}}
+{"collect_progress": {"samples": 400, "target": 2000, "attempts": 403, "coverage": 0.9925558312655087}}
+{"collect_progress": {"samples": 600, "target": 2000, "attempts": 606, "coverage": 0.9900990099009901}}
+{"collect_progress": {"samples": 800, "target": 2000, "attempts": 806, "coverage": 0.9925558312655087}}
+{"collect_progress": {"samples": 1000, "target": 2000, "attempts": 1007, "coverage": 0.9930486593843099}}
+{"collect_progress": {"samples": 1200, "target": 2000, "attempts": 1207, "coverage": 0.9942004971002486}}
+{"collect_progress": {"samples": 1400, "target": 2000, "attempts": 1407, "coverage": 0.9950248756218906}}
+{"collect_progress": {"samples": 1600, "target": 2000, "attempts": 1610, "coverage": 0.9937888198757764}}
+{"collect_progress": {"samples": 1800, "target": 2000, "attempts": 1811, "coverage": 0.9939260077305356}}
+{"collect_progress": {"samples": 2000, "target": 2000, "attempts": 2012, "coverage": 0.9940357852882704}}
+{"collect_progress": {"samples": 50, "target": 400, "attempts": 51, "coverage": 0.9803921568627451}}
+{"collect_progress": {"samples": 100, "target": 400, "attempts": 101, "coverage": 0.9900990099009901}}
+{"collect_progress": {"samples": 150, "target": 400, "attempts": 151, "coverage": 0.9933774834437086}}
+{"collect_progress": {"samples": 200, "target": 400, "attempts": 201, "coverage": 0.9950248756218906}}
+{"collect_progress": {"samples": 250, "target": 400, "attempts": 251, "coverage": 0.9960159362549801}}
+{"collect_progress": {"samples": 300, "target": 400, "attempts": 301, "coverage": 0.9966777408637874}}
+{"collect_progress": {"samples": 350, "target": 400, "attempts": 351, "coverage": 0.9971509971509972}}
+{"collect_progress": {"samples": 400, "target": 400, "attempts": 401, "coverage": 0.9975062344139651}}
+{"dataset_stats": {"train": {"attempts": 2012, "skipped_uncovered": 0, "skipped_terminal": 1, "skipped_noop": 11, "candidate_size_sum": 384000.0, "coverage": 0.9940357852882704, "avg_candidate_size": 192.0}, "val": {"attempts": 401, "skipped_uncovered": 0, "skipped_terminal": 0, "skipped_noop": 1, "candidate_size_sum": 76800.0, "coverage": 0.9975062344139651, "avg_candidate_size": 192.0}}}
+Resume: new parameters initialized from scratch: ['reward_context_head.0.weight', 'reward_context_head.0.bias', 'reward_context_head.1.weight', 'reward_context_head.1.bias', 'reward_context_head.3.weight', 'reward_context_head.3.bias']
+Resume: optimizer state incompatible (loaded state dict contains a parameter group that doesn't match the size of optimizer's group), reinitializing optimizer (weights loaded)
+Initialized best_score from resume checkpoint under current selection metric: 3.1052
+[Epoch 121/150] loss=4.5730 mask=1.0171 count=1.3376 pair=0.6531 proj_mask=0.3710 type=0.9057 prior_edit=2.0557 tau=0.0019 tau_prior=0.0019 tau_post=4542.9152 real_tau=0.1809 real_tau_prior=0.1809 real_tau_post=17.9126 tau_post_scale=0.00 reward=0.0670 latent=0.0159 proj=0.0127 path=2.8877 prior_latent=0.0048 mask_aux=0.49 time=69.2s
+[Epoch 122/150] loss=0.8472 mask=0.0629 count=0.1278 pair=0.0583 proj_mask=0.0112 type=0.0951 prior_edit=0.1606 tau=-1.4309 tau_prior=-1.4309 tau_post=3456.1971 real_tau=0.0581 real_tau_prior=0.0581 real_tau_post=1.9270 tau_post_scale=0.00 reward=0.0641 latent=0.0137 proj=0.0098 path=2.6694 prior_latent=0.0026 mask_aux=0.48 time=62.6s
+  >>> VAL reward_mae=1.0869 reward_corr=0.1854 tau_log_mae=0.0851 tau_log_corr=0.9885 tau_scale=1.00 real_tau_nll=-1.4095 real_tau_log_mae=0.4718 real_tau_cov68=0.6825 real_tau_pit_ks=0.0542 change_f1=0.9798 change_topk_f1=0.9618 proj_change_f1=0.9291 chg_type_acc=0.9922 proj_chg_type_acc=0.9252 pair_fe=3.19/3.22 pair_cu=0.46/0.62 matched_pair=3.54 unchg_copy_acc=0.9758 vac_copy_acc=0.9950 reach_violation=0.0000 proj_global_l1=0.0022
+  >>> New best model: score=1.0682
+[Epoch 123/150] loss=0.7065 mask=0.0341 count=0.1263 pair=0.0539 proj_mask=0.0023 type=0.0629 prior_edit=0.1124 tau=-1.4554 tau_prior=-1.4554 tau_post=4334.2569 real_tau=0.0204 real_tau_prior=0.0204 real_tau_post=1.5051 tau_post_scale=0.00 reward=0.0483 latent=0.0124 proj=0.0087 path=2.5825 prior_latent=0.0023 mask_aux=0.46 time=62.3s
+[Epoch 124/150] loss=0.6082 mask=0.0317 count=0.1276 pair=0.0554 proj_mask=0.0018 type=0.0566 prior_edit=0.1047 tau=-1.5339 tau_prior=-1.5339 tau_post=4193.1695 real_tau=-0.0018 real_tau_prior=-0.0018 real_tau_post=1.8146 tau_post_scale=0.00 reward=0.0485 latent=0.0113 proj=0.0079 path=2.5262 prior_latent=0.0024 mask_aux=0.45 time=61.0s
+  >>> VAL reward_mae=1.0725 reward_corr=0.1837 tau_log_mae=0.0860 tau_log_corr=0.9887 tau_scale=0.99 real_tau_nll=-1.4427 real_tau_log_mae=0.4665 real_tau_cov68=0.7100 real_tau_pit_ks=0.0460 change_f1=0.9798 change_topk_f1=0.9614 proj_change_f1=0.9262 chg_type_acc=0.9915 proj_chg_type_acc=0.9239 pair_fe=3.20/3.22 pair_cu=0.45/0.62 matched_pair=3.53 unchg_copy_acc=0.9846 vac_copy_acc=0.9950 reach_violation=0.0000 proj_global_l1=0.0019
+  >>> New best model: score=1.0405
+[Epoch 125/150] loss=0.5993 mask=0.0305 count=0.1292 pair=0.0532 proj_mask=0.0013 type=0.0468 prior_edit=0.0988 tau=-1.5225 tau_prior=-1.5225 tau_post=4495.7126 real_tau=-0.0031 real_tau_prior=-0.0031 real_tau_post=1.3895 tau_post_scale=0.00 reward=0.0428 latent=0.0111 proj=0.0076 path=2.4821 prior_latent=0.0026 mask_aux=0.44 time=57.1s
+[Epoch 126/150] loss=0.5021 mask=0.0296 count=0.1296 pair=0.0527 proj_mask=0.0012 type=0.0407 prior_edit=0.0925 tau=-1.6011 tau_prior=-1.6011 tau_post=4173.1134 real_tau=0.0056 real_tau_prior=0.0056 real_tau_post=1.4350 tau_post_scale=0.00 reward=0.0453 latent=0.0109 proj=0.0074 path=2.4471 prior_latent=0.0022 mask_aux=0.42 time=57.6s
+  >>> VAL reward_mae=1.1116 reward_corr=0.1848 tau_log_mae=0.0858 tau_log_corr=0.9877 tau_scale=1.00 real_tau_nll=-1.4217 real_tau_log_mae=0.4869 real_tau_cov68=0.7025 real_tau_pit_ks=0.1279 change_f1=0.9798 change_topk_f1=0.9620 proj_change_f1=0.9291 chg_type_acc=0.9928 proj_chg_type_acc=0.9252 pair_fe=3.19/3.22 pair_cu=0.46/0.61 matched_pair=3.54 unchg_copy_acc=0.9872 vac_copy_acc=0.9946 reach_violation=0.0000 proj_global_l1=0.0017
+  >>> New best model: score=1.0396
+[Epoch 127/150] loss=0.4565 mask=0.0286 count=0.1302 pair=0.0520 proj_mask=0.0011 type=0.0365 prior_edit=0.0897 tau=-1.6387 tau_prior=-1.6387 tau_post=4131.0789 real_tau=-0.0115 real_tau_prior=-0.0115 real_tau_post=0.9770 tau_post_scale=0.00 reward=0.0430 latent=0.0102 proj=0.0070 path=2.4252 prior_latent=0.0018 mask_aux=0.41 time=57.2s
+[Epoch 128/150] loss=0.5521 mask=0.0280 count=0.1301 pair=0.0509 proj_mask=0.0012 type=0.0350 prior_edit=0.0843 tau=-1.5445 tau_prior=-1.5445 tau_post=4668.2680 real_tau=-0.0139 real_tau_prior=-0.0139 real_tau_post=1.1154 tau_post_scale=0.00 reward=0.0496 latent=0.0095 proj=0.0067 path=2.3986 prior_latent=0.0022 mask_aux=0.40 time=59.1s
+  >>> VAL reward_mae=1.0657 reward_corr=0.1863 tau_log_mae=0.0912 tau_log_corr=0.9886 tau_scale=0.97 real_tau_nll=-1.4488 real_tau_log_mae=0.4742 real_tau_cov68=0.6825 real_tau_pit_ks=0.0993 change_f1=0.9798 change_topk_f1=0.9609 proj_change_f1=0.9291 chg_type_acc=0.9928 proj_chg_type_acc=0.9252 pair_fe=3.19/3.22 pair_cu=0.46/0.60 matched_pair=3.54 unchg_copy_acc=0.9902 vac_copy_acc=0.9946 reach_violation=0.0000 proj_global_l1=0.0017
+  >>> New best model: score=1.0253
+[Epoch 129/150] loss=0.4450 mask=0.0274 count=0.1305 pair=0.0512 proj_mask=0.0011 type=0.0329 prior_edit=0.0828 tau=-1.6454 tau_prior=-1.6454 tau_post=4671.8914 real_tau=-0.0107 real_tau_prior=-0.0107 real_tau_post=0.8102 tau_post_scale=0.00 reward=0.0473 latent=0.0092 proj=0.0065 path=2.4082 prior_latent=0.0019 mask_aux=0.38 time=56.6s
+[Epoch 130/150] loss=0.4446 mask=0.0269 count=0.1302 pair=0.0506 proj_mask=0.0011 type=0.0317 prior_edit=0.0789 tau=-1.6437 tau_prior=-1.6437 tau_post=4790.1751 real_tau=-0.0099 real_tau_prior=-0.0099 real_tau_post=0.8866 tau_post_scale=0.00 reward=0.0456 latent=0.0090 proj=0.0064 path=2.4414 prior_latent=0.0021 mask_aux=0.37 time=58.2s
+  >>> VAL reward_mae=1.0859 reward_corr=0.1853 tau_log_mae=0.0871 tau_log_corr=0.9881 tau_scale=0.99 real_tau_nll=-1.4531 real_tau_log_mae=0.4695 real_tau_cov68=0.6925 real_tau_pit_ks=0.0706 change_f1=0.9798 change_topk_f1=0.9593 proj_change_f1=0.9291 chg_type_acc=0.9928 proj_chg_type_acc=0.9252 pair_fe=3.19/3.22 pair_cu=0.46/0.61 matched_pair=3.54 unchg_copy_acc=0.9952 vac_copy_acc=0.9946 reach_violation=0.0000 proj_global_l1=0.0017
+[Epoch 131/150] loss=0.4270 mask=0.0270 count=0.1301 pair=0.0499 proj_mask=0.0011 type=0.0305 prior_edit=0.0789 tau=-1.6522 tau_prior=-1.6522 tau_post=4831.3585 real_tau=-0.0290 real_tau_prior=-0.0290 real_tau_post=0.7591 tau_post_scale=0.00 reward=0.0437 latent=0.0087 proj=0.0064 path=2.4190 prior_latent=0.0018 mask_aux=0.36 time=57.3s
+[Epoch 132/150] loss=0.4498 mask=0.0265 count=0.1301 pair=0.0490 proj_mask=0.0010 type=0.0284 prior_edit=0.0739 tau=-1.6325 tau_prior=-1.6325 tau_post=5538.4146 real_tau=-0.0277 real_tau_prior=-0.0277 real_tau_post=0.9101 tau_post_scale=0.00 reward=0.0473 latent=0.0081 proj=0.0062 path=2.3982 prior_latent=0.0024 mask_aux=0.34 time=58.2s
+  >>> VAL reward_mae=1.0864 reward_corr=0.1803 tau_log_mae=0.0930 tau_log_corr=0.9877 tau_scale=0.97 real_tau_nll=-1.4540 real_tau_log_mae=0.4674 real_tau_cov68=0.7000 real_tau_pit_ks=0.0571 change_f1=0.9798 change_topk_f1=0.9602 proj_change_f1=0.9289 chg_type_acc=0.9922 proj_chg_type_acc=0.9249 pair_fe=3.20/3.23 pair_cu=0.46/0.61 matched_pair=3.54 unchg_copy_acc=0.9978 vac_copy_acc=0.9946 reach_violation=0.0000 proj_global_l1=0.0019
+[Epoch 133/150] loss=0.3729 mask=0.0262 count=0.1297 pair=0.0483 proj_mask=0.0010 type=0.0268 prior_edit=0.0719 tau=-1.6923 tau_prior=-1.6923 tau_post=5470.4511 real_tau=-0.0304 real_tau_prior=-0.0304 real_tau_post=0.6932 tau_post_scale=0.00 reward=0.0412 latent=0.0082 proj=0.0062 path=2.3708 prior_latent=0.0020 mask_aux=0.33 time=57.1s
+[Epoch 134/150] loss=0.4438 mask=0.0262 count=0.1286 pair=0.0483 proj_mask=0.0012 type=0.0280 prior_edit=0.0724 tau=-1.6271 tau_prior=-1.6271 tau_post=5705.1443 real_tau=-0.0039 real_tau_prior=-0.0039 real_tau_post=0.8993 tau_post_scale=0.00 reward=0.0405 latent=0.0078 proj=0.0062 path=2.3862 prior_latent=0.0030 mask_aux=0.31 time=56.7s
+  >>> VAL reward_mae=1.1033 reward_corr=0.1788 tau_log_mae=0.1054 tau_log_corr=0.9873 tau_scale=0.95 real_tau_nll=-1.4466 real_tau_log_mae=0.4775 real_tau_cov68=0.6875 real_tau_pit_ks=0.1094 change_f1=0.9798 change_topk_f1=0.9585 proj_change_f1=0.9295 chg_type_acc=0.9944 proj_chg_type_acc=0.9255 pair_fe=3.19/3.24 pair_cu=0.46/0.65 matched_pair=3.54 unchg_copy_acc=0.9982 vac_copy_acc=0.9950 reach_violation=0.0000 proj_global_l1=0.0020
+[Epoch 135/150] loss=0.4073 mask=0.0259 count=0.1302 pair=0.0495 proj_mask=0.0011 type=0.0273 prior_edit=0.0724 tau=-1.6483 tau_prior=-1.6483 tau_post=5409.7751 real_tau=-0.0377 real_tau_prior=-0.0377 real_tau_post=0.7954 tau_post_scale=0.00 reward=0.0428 latent=0.0082 proj=0.0065 path=2.3648 prior_latent=0.0026 mask_aux=0.30 time=56.1s
+[Epoch 136/150] loss=0.4260 mask=0.0256 count=0.1283 pair=0.0485 proj_mask=0.0012 type=0.0261 prior_edit=0.0683 tau=-1.6369 tau_prior=-1.6369 tau_post=6331.3705 real_tau=-0.0298 real_tau_prior=-0.0298 real_tau_post=0.5376 tau_post_scale=0.00 reward=0.0464 latent=0.0079 proj=0.0064 path=2.3565 prior_latent=0.0023 mask_aux=0.29 time=56.7s
+  >>> VAL reward_mae=1.0745 reward_corr=0.1836 tau_log_mae=0.0949 tau_log_corr=0.9872 tau_scale=1.02 real_tau_nll=-1.4481 real_tau_log_mae=0.4639 real_tau_cov68=0.7025 real_tau_pit_ks=0.0617 change_f1=0.9798 change_topk_f1=0.9587 proj_change_f1=0.9255 chg_type_acc=0.9970 proj_chg_type_acc=0.9233 pair_fe=3.19/3.24 pair_cu=0.46/0.59 matched_pair=3.53 unchg_copy_acc=0.9985 vac_copy_acc=0.9950 reach_violation=0.0000 proj_global_l1=0.0021
+[Epoch 137/150] loss=0.4270 mask=0.0257 count=0.1287 pair=0.0474 proj_mask=0.0011 type=0.0247 prior_edit=0.0677 tau=-1.6279 tau_prior=-1.6279 tau_post=5162.5389 real_tau=-0.0399 real_tau_prior=-0.0399 real_tau_post=0.7361 tau_post_scale=0.00 reward=0.0453 latent=0.0076 proj=0.0062 path=2.4211 prior_latent=0.0026 mask_aux=0.27 time=56.6s
+[Epoch 138/150] loss=0.3802 mask=0.0253 count=0.1287 pair=0.0486 proj_mask=0.0010 type=0.0248 prior_edit=0.0682 tau=-1.6802 tau_prior=-1.6802 tau_post=4372.3224 real_tau=-0.0288 real_tau_prior=-0.0288 real_tau_post=0.4860 tau_post_scale=0.00 reward=0.0461 latent=0.0070 proj=0.0061 path=2.3866 prior_latent=0.0029 mask_aux=0.26 time=57.3s
+  >>> VAL reward_mae=1.0929 reward_corr=0.1810 tau_log_mae=0.1068 tau_log_corr=0.9870 tau_scale=1.06 real_tau_nll=-1.4392 real_tau_log_mae=0.4679 real_tau_cov68=0.6600 real_tau_pit_ks=0.0637 change_f1=0.9798 change_topk_f1=0.9603 proj_change_f1=0.9295 chg_type_acc=0.9951 proj_chg_type_acc=0.9255 pair_fe=3.19/3.25 pair_cu=0.46/0.61 matched_pair=3.54 unchg_copy_acc=0.9985 vac_copy_acc=0.9950 reach_violation=0.0000 proj_global_l1=0.0022
+[Epoch 139/150] loss=0.4711 mask=0.0255 count=0.1277 pair=0.0477 proj_mask=0.0017 type=0.0258 prior_edit=0.0701 tau=-1.5780 tau_prior=-1.5780 tau_post=5523.8459 real_tau=-0.0304 real_tau_prior=-0.0304 real_tau_post=0.4430 tau_post_scale=0.00 reward=0.0381 latent=0.0074 proj=0.0065 path=2.4142 prior_latent=0.0026 mask_aux=0.25 time=58.5s
+[Epoch 140/150] loss=0.4425 mask=0.0252 count=0.1298 pair=0.0495 proj_mask=0.0010 type=0.0260 prior_edit=0.0697 tau=-1.6081 tau_prior=-1.6081 tau_post=4391.5591 real_tau=-0.0465 real_tau_prior=-0.0465 real_tau_post=0.5160 tau_post_scale=0.00 reward=0.0434 latent=0.0071 proj=0.0064 path=2.3349 prior_latent=0.0031 mask_aux=0.23 time=56.3s
+  >>> VAL reward_mae=1.0688 reward_corr=0.1857 tau_log_mae=0.0937 tau_log_corr=0.9874 tau_scale=1.03 real_tau_nll=-1.4331 real_tau_log_mae=0.4651 real_tau_cov68=0.6550 real_tau_pit_ks=0.0758 change_f1=0.9798 change_topk_f1=0.9606 proj_change_f1=0.9300 chg_type_acc=0.9951 proj_chg_type_acc=0.9258 pair_fe=3.19/3.24 pair_cu=0.46/0.61 matched_pair=3.54 unchg_copy_acc=0.9985 vac_copy_acc=0.9950 reach_violation=0.0000 proj_global_l1=0.0025
+[Epoch 141/150] loss=0.4032 mask=0.0250 count=0.1283 pair=0.0472 proj_mask=0.0012 type=0.0226 prior_edit=0.0648 tau=-1.6354 tau_prior=-1.6354 tau_post=4368.4568 real_tau=-0.0392 real_tau_prior=-0.0392 real_tau_post=0.5577 tau_post_scale=0.00 reward=0.0406 latent=0.0073 proj=0.0068 path=2.4078 prior_latent=0.0031 mask_aux=0.22 time=58.9s
+[Epoch 142/150] loss=0.4283 mask=0.0253 count=0.1298 pair=0.0466 proj_mask=0.0010 type=0.0224 prior_edit=0.0654 tau=-1.6188 tau_prior=-1.6188 tau_post=4221.7424 real_tau=-0.0468 real_tau_prior=-0.0468 real_tau_post=0.3288 tau_post_scale=0.00 reward=0.0489 latent=0.0071 proj=0.0069 path=2.3187 prior_latent=0.0032 mask_aux=0.21 time=58.4s
+  >>> VAL reward_mae=1.1183 reward_corr=0.1808 tau_log_mae=0.0892 tau_log_corr=0.9872 tau_scale=0.98 real_tau_nll=-1.4597 real_tau_log_mae=0.4677 real_tau_cov68=0.6825 real_tau_pit_ks=0.0613 change_f1=0.9798 change_topk_f1=0.9599 proj_change_f1=0.9300 chg_type_acc=0.9947 proj_chg_type_acc=0.9258 pair_fe=3.19/3.24 pair_cu=0.46/0.60 matched_pair=3.54 unchg_copy_acc=0.9986 vac_copy_acc=0.9950 reach_violation=0.0000 proj_global_l1=0.0029
+[Epoch 143/150] loss=0.3367 mask=0.0246 count=0.1271 pair=0.0460 proj_mask=0.0012 type=0.0216 prior_edit=0.0626 tau=-1.6947 tau_prior=-1.6947 tau_post=5097.2221 real_tau=-0.0532 real_tau_prior=-0.0532 real_tau_post=0.3681 tau_post_scale=0.00 reward=0.0426 latent=0.0071 proj=0.0073 path=2.4472 prior_latent=0.0039 mask_aux=0.19 time=58.0s
+[Epoch 144/150] loss=0.4508 mask=0.0246 count=0.1292 pair=0.0477 proj_mask=0.0010 type=0.0242 prior_edit=0.0683 tau=-1.5882 tau_prior=-1.5882 tau_post=5230.1705 real_tau=-0.0489 real_tau_prior=-0.0489 real_tau_post=0.3476 tau_post_scale=0.00 reward=0.0453 latent=0.0071 proj=0.0075 path=2.4261 prior_latent=0.0038 mask_aux=0.18 time=58.8s
+  >>> VAL reward_mae=1.0828 reward_corr=0.1738 tau_log_mae=0.0951 tau_log_corr=0.9876 tau_scale=1.00 real_tau_nll=-1.4549 real_tau_log_mae=0.4666 real_tau_cov68=0.6975 real_tau_pit_ks=0.0497 change_f1=0.9798 change_topk_f1=0.9617 proj_change_f1=0.9249 chg_type_acc=0.9964 proj_chg_type_acc=0.9229 pair_fe=3.19/3.24 pair_cu=0.46/0.58 matched_pair=3.52 unchg_copy_acc=0.9986 vac_copy_acc=0.9950 reach_violation=0.0000 proj_global_l1=0.0034
+[Epoch 145/150] loss=0.4448 mask=0.0245 count=0.1290 pair=0.0465 proj_mask=0.0015 type=0.0205 prior_edit=0.0613 tau=-1.5964 tau_prior=-1.5964 tau_post=3484.1048 real_tau=-0.0385 real_tau_prior=-0.0385 real_tau_post=0.3249 tau_post_scale=0.00 reward=0.0434 latent=0.0070 proj=0.0076 path=2.4142 prior_latent=0.0057 mask_aux=0.17 time=57.1s
+[Epoch 146/150] loss=0.4449 mask=0.0242 count=0.1278 pair=0.0457 proj_mask=0.0011 type=0.0201 prior_edit=0.0618 tau=-1.5927 tau_prior=-1.5927 tau_post=4065.0051 real_tau=-0.0477 real_tau_prior=-0.0477 real_tau_post=0.2208 tau_post_scale=0.00 reward=0.0408 latent=0.0070 proj=0.0077 path=2.4350 prior_latent=0.0057 mask_aux=0.15 time=59.1s
+  >>> VAL reward_mae=1.0814 reward_corr=0.1851 tau_log_mae=0.1210 tau_log_corr=0.9876 tau_scale=0.92 real_tau_nll=-1.4377 real_tau_log_mae=0.4696 real_tau_cov68=0.7675 real_tau_pit_ks=0.0705 change_f1=0.9798 change_topk_f1=0.9603 proj_change_f1=0.9300 chg_type_acc=0.9931 proj_chg_type_acc=0.9268 pair_fe=3.19/3.28 pair_cu=0.46/0.56 matched_pair=3.55 unchg_copy_acc=0.9986 vac_copy_acc=0.9950 reach_violation=0.0000 proj_global_l1=0.0035
+[Epoch 147/150] loss=0.6226 mask=0.0243 count=0.1291 pair=0.0459 proj_mask=0.0009 type=0.0203 prior_edit=0.0624 tau=-1.4107 tau_prior=-1.4107 tau_post=3782.7156 real_tau=-0.0434 real_tau_prior=-0.0434 real_tau_post=0.2446 tau_post_scale=0.00 reward=0.0467 latent=0.0065 proj=0.0076 path=2.3894 prior_latent=0.0088 mask_aux=0.14 time=57.1s
+[Epoch 148/150] loss=0.3663 mask=0.0240 count=0.1276 pair=0.0449 proj_mask=0.0009 type=0.0193 prior_edit=0.0601 tau=-1.6697 tau_prior=-1.6697 tau_post=4621.6394 real_tau=-0.0467 real_tau_prior=-0.0467 real_tau_post=0.2529 tau_post_scale=0.00 reward=0.0465 latent=0.0069 proj=0.0082 path=2.4166 prior_latent=0.0069 mask_aux=0.13 time=59.2s
+  >>> VAL reward_mae=1.1036 reward_corr=0.1764 tau_log_mae=0.0885 tau_log_corr=0.9867 tau_scale=1.02 real_tau_nll=-1.4546 real_tau_log_mae=0.4723 real_tau_cov68=0.6600 real_tau_pit_ks=0.1073 change_f1=0.9798 change_topk_f1=0.9611 proj_change_f1=0.9273 chg_type_acc=0.9967 proj_chg_type_acc=0.9239 pair_fe=3.19/3.25 pair_cu=0.46/0.59 matched_pair=3.53 unchg_copy_acc=0.9987 vac_copy_acc=0.9950 reach_violation=0.0000 proj_global_l1=0.0039
+[Epoch 149/150] loss=0.4332 mask=0.0237 count=0.1270 pair=0.0454 proj_mask=0.0010 type=0.0204 prior_edit=0.0604 tau=-1.5782 tau_prior=-1.5782 tau_post=3999.2720 real_tau=-0.0512 real_tau_prior=-0.0512 real_tau_post=0.1560 tau_post_scale=0.00 reward=0.0436 latent=0.0068 proj=0.0085 path=2.3523 prior_latent=0.0064 mask_aux=0.11 time=60.3s
+[Epoch 150/150] loss=0.2735 mask=0.0237 count=0.1278 pair=0.0475 proj_mask=0.0011 type=0.0222 prior_edit=0.0640 tau=-1.7282 tau_prior=-1.7282 tau_post=3551.0227 real_tau=-0.0639 real_tau_prior=-0.0639 real_tau_post=0.2219 tau_post_scale=0.00 reward=0.0414 latent=0.0070 proj=0.0088 path=2.3077 prior_latent=0.0075 mask_aux=0.10 time=60.8s
+  >>> VAL reward_mae=1.0728 reward_corr=0.1946 tau_log_mae=0.0913 tau_log_corr=0.9874 tau_scale=0.97 real_tau_nll=-1.4200 real_tau_log_mae=0.4700 real_tau_cov68=0.5925 real_tau_pit_ks=0.0982 change_f1=0.9798 change_topk_f1=0.9622 proj_change_f1=0.9251 chg_type_acc=0.9934 proj_chg_type_acc=0.9229 pair_fe=3.21/3.24 pair_cu=0.45/0.56 matched_pair=3.52 unchg_copy_acc=0.9986 vac_copy_acc=0.9946 reach_violation=0.0000 proj_global_l1=0.0046
+{
+  "final_val": {
+    "reward_mae": 1.0727614462497876,
+    "reward_rmse": 1.4857094761858138,
+    "reward_corr": 0.1946337593807468,
+    "tau_log_mae": 0.09134377655863624,
+    "tau_log_rmse": 0.1844231086664247,
+    "tau_log_corr": 0.9874395540988004,
+    "tau_scale_ratio": 0.9729425455138463,
+    "realized_tau_available": 1.0,
+    "realized_tau_mae": 0.055644681493016795,
+    "realized_tau_rmse": 0.07411213085232737,
+    "realized_tau_corr": 0.39439956560903633,
+    "realized_tau_log_mae": 0.4699959796902526,
+    "realized_tau_log_rmse": 0.5924487538989022,
+    "realized_tau_log_corr": 0.8759013177223436,
+    "realized_tau_scale_ratio": 1.1910699408659886,
+    "realized_tau_nll": -1.4200398447778158,
+    "realized_tau_coverage_68": 0.5925,
+    "realized_tau_coverage_95": 0.8825,
+    "realized_tau_pit_mean": 0.5195681115560759,
+    "realized_tau_pit_var": 0.1025569811798205,
+    "realized_tau_pit_ks": 0.09824745538995017,
+    "realized_tau_mean_log_sigma": -0.7378693257272243,
+    "change_f1": 0.9798070140182972,
+    "change_topk_f1": 0.9622499999999999,
+    "changed_type_acc": 0.9933737883201013,
+    "projected_change_f1": 0.9251470057720057,
+    "projected_changed_type_acc": 0.9229246836442214,
+    "unchanged_copy_acc": 0.9986462959876428,
+    "unchanged_atom_copy_acc": 0.9987871738580557,
+    "unchanged_vacancy_copy_acc": 0.9946031799683204,
+    "raw_vac_to_fe_count": 3.205,
+    "raw_fe_to_vac_count": 3.2375,
+    "raw_vac_to_cu_count": 0.4475,
+    "raw_cu_to_vac_count": 0.5625,
+    "raw_matched_pair_count": 3.52,
+    "latent_l1": 0.006047530995252041,
+    "projected_global_l1": 0.004640106881897037,
+    "reachability_violation_rate": 0.0,
+    "mean_vacancy_transport_cost": 3.9525
+  },
+  "dataset": {
+    "train": {
+      "attempts": 2012,
+      "skipped_uncovered": 0,
+      "skipped_terminal": 1,
+      "skipped_noop": 11,
+      "candidate_size_sum": 384000.0,
+      "coverage": 0.9940357852882704,
+      "avg_candidate_size": 192.0
+    },
+    "val": {
+      "attempts": 401,
+      "skipped_uncovered": 0,
+      "skipped_terminal": 0,
+      "skipped_noop": 1,
+      "candidate_size_sum": 76800.0,
+      "coverage": 0.9975062344139651,
+      "avg_candidate_size": 192.0
+    }
+  }
+}
