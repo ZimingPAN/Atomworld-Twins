@@ -14,10 +14,13 @@ __pycache__/
 # 忽略本地工具与临时目录
 /.claude/
 /.copilot_tmp/
+/.vscode/
 
 # 忽略训练/评估生成结果
 /dreamer4-main/results/
 /dreamer4-main/results/**/segments.pt
+/time_eval_results/
+/time_eval_results_v10e_fix/
 
 /doc/
 
