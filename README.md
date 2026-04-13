@@ -75,7 +75,7 @@ Environment:
 
 - Python 3.10 or 3.11 recommended
 - Install dependencies with `python -m pip install -r requirements.txt`
-- See [doc/dependencies.md](doc/dependencies.md) for pip setup, smoke checks, and optional extras
+- See [dependencies.md](dependencies.md) for pip setup, smoke checks, and optional extras
 
 Train the macro world model:
 
@@ -166,7 +166,7 @@ Student：
 
 - 推荐 Python 3.10 或 3.11
 - 可直接执行 `python -m pip install -r requirements.txt`
-- 纯 pip 安装、smoke check 和可选依赖见 [doc/dependencies.md](doc/dependencies.md)
+- 纯 pip 安装、smoke check 和可选依赖见 [dependencies.md](dependencies.md)
 
 训练宏步世界模型：
 
