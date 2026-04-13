@@ -340,6 +340,12 @@ class MacroDreamerEditModel(nn.Module):
             nn.SiLU(),
             nn.Linear(128, 1),
         )
+        self.reward_gate_context_head = nn.Sequential(
+            nn.LayerNorm(reward_context_in),
+            nn.Linear(reward_context_in, 128),
+            nn.SiLU(),
+            nn.Linear(128, 1),
+        )
         self.duration_head = nn.Sequential(
             nn.LayerNorm(reward_time_in),
             nn.Linear(reward_time_in, 256),
@@ -368,6 +374,8 @@ class MacroDreamerEditModel(nn.Module):
             self.realized_duration_head[-1].bias[1] = -1.0
             self.reward_context_head[-1].weight.zero_()
             self.reward_context_head[-1].bias.zero_()
+            self.reward_gate_context_head[-1].weight.zero_()
+            self.reward_gate_context_head[-1].bias.zero_()
 
     def encode_global(self, obs: torch.Tensor) -> torch.Tensor:
         latent = self.global_encoder(obs)
@@ -503,7 +511,7 @@ class MacroDreamerEditModel(nn.Module):
             reward_edit_features = global_latent.new_zeros((global_latent.shape[0], self.reward_context_feature_dim))
         reward_context = torch.cat([reward_patch_latent, reward_edit_features, k_emb], dim=-1)
         reward = self.reward_head(reward_hidden).squeeze(-1) + self.reward_context_head(reward_context).squeeze(-1)
-        gate_logit = self.reward_gate_head(reward_hidden).squeeze(-1)
+        gate_logit = self.reward_gate_head(reward_hidden).squeeze(-1) + self.reward_gate_context_head(reward_context).squeeze(-1)
 
         if detach_duration_inputs:
             duration_inputs = [

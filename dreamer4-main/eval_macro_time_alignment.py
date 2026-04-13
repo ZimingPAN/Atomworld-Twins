@@ -146,6 +146,24 @@ def main() -> None:
             )
             path_latent = model.sample_path_latent(prior_mu, prior_logvar, deterministic=True)
             next_pred = model.predict_next_global(global_latent, path_latent, tensors["horizon_k"])
+            site_latent, patch_latent = model.encode_patch(
+                positions=tensors["candidate_positions"],
+                nearest_vacancy_offset=tensors["nearest_vacancy_offset"],
+                reach_depth=tensors["reach_depth"],
+                is_start_vacancy=tensors["is_start_vacancy"],
+                type_ids=tensors["current_types"],
+                node_mask=tensors["candidate_mask"],
+                global_summary=tensors["global_summary"],
+                box_dims=tensors["box_dims"],
+            )
+            change_logits, raw_type_logits = model.decode_edit(
+                site_latent=site_latent,
+                patch_latent=patch_latent,
+                predicted_next_global=next_pred,
+                path_latent=path_latent,
+                horizon_k=tensors["horizon_k"],
+                current_types=tensors["current_types"],
+            )
             duration_outputs = mod._predict_reward_and_duration_outputs(
                 model,
                 global_latent,
@@ -153,6 +171,11 @@ def main() -> None:
                 path_latent,
                 tensors["global_summary"],
                 tensors["horizon_k"],
+                patch_latent=patch_latent,
+                change_logits=change_logits,
+                type_logits=raw_type_logits,
+                current_types=tensors["current_types"],
+                candidate_mask=tensors["candidate_mask"],
             )
             reward_hat = duration_outputs["reward"]
             tau_mu = duration_outputs["expected_tau_mu"]
@@ -166,14 +189,18 @@ def main() -> None:
             gate_logit = duration_outputs["gate_logit"]
             gated_reward = reward_hat * torch.sigmoid(gate_logit)
             batch_pred_reward = gated_reward.detach().cpu().numpy()
+            batch_pred_reward_raw = reward_hat.detach().cpu().numpy()
+            batch_pred_reward_gate = torch.sigmoid(gate_logit).detach().cpu().numpy()
             batch_pred_tau = torch.exp(tau_mu).detach().cpu().numpy()
             batch_pred_realized_tau = torch.exp(realized_tau_mu).detach().cpu().numpy()
             batch_pred_realized_tau_mu = realized_tau_mu.detach().cpu().numpy()
             batch_pred_realized_tau_log_sigma = realized_tau_log_sigma.detach().cpu().numpy()
 
-            for sample, item_pred_reward, item_pred_tau, item_pred_realized_tau, item_pred_realized_tau_mu, item_pred_realized_tau_log_sigma in zip(
+            for sample, item_pred_reward, item_pred_reward_raw, item_pred_reward_gate, item_pred_tau, item_pred_realized_tau, item_pred_realized_tau_mu, item_pred_realized_tau_log_sigma in zip(
                 batch,
                 batch_pred_reward,
+                batch_pred_reward_raw,
+                batch_pred_reward_gate,
                 batch_pred_tau,
                 batch_pred_realized_tau,
                 batch_pred_realized_tau_mu,
@@ -196,6 +223,8 @@ def main() -> None:
                         "traditional_kmc_expected_tau": float(sample.tau_exp),
                         "traditional_kmc_realized_tau": float(sample.tau_real),
                         "predicted_reward_sum": float(item_pred_reward),
+                        "predicted_reward_raw": float(item_pred_reward_raw),
+                        "predicted_reward_gate_prob": float(item_pred_reward_gate),
                         "predicted_delta_e": float(item_pred_reward / reward_scale),
                         "predicted_tau": float(item_pred_tau),
                         "predicted_expected_tau": float(item_pred_tau),
@@ -259,6 +288,7 @@ def main() -> None:
             "realized_tau_source": realized_tau_source,
         },
         "reward_sum": _compute_metrics(pred_reward_sum_np, true_reward_sum_np),
+        "reward_diagnostics": mod._compute_reward_diagnostics(pred_reward_sum_np, true_reward_sum_np),
         "delta_e": _compute_metrics(pred_delta_e_np, true_delta_e_np),
         "tau_expected": {
             **_compute_metrics(pred_tau_np, true_tau_exp_np),

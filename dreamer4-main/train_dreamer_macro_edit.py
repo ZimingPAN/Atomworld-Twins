@@ -839,6 +839,40 @@ def _scheduled_posterior_tau_scale(epoch: int, total_epochs: int, start_fraction
     return float(1.0 - (1.0 - end_scale) * min(max(tail_progress, 0.0), 1.0))
 
 
+def _compute_reward_diagnostics(pred_reward: np.ndarray, true_reward: np.ndarray) -> dict[str, float]:
+    pred = np.asarray(pred_reward, dtype=np.float64)
+    true = np.asarray(true_reward, dtype=np.float64)
+    if pred.size == 0 or true.size == 0:
+        return {
+            "mean_bias": 0.0,
+            "zero_target_frac": 0.0,
+            "negative_target_frac": 0.0,
+            "zero_pred_mean": 0.0,
+            "zero_pred_mean_abs": 0.0,
+            "negative_pred_mean": 0.0,
+            "negative_bias": 0.0,
+            "nonzero_sign_acc": 1.0,
+        }
+
+    zero_mask = np.isclose(true, 0.0, atol=1e-8)
+    negative_mask = true < -1e-8
+    nonzero_mask = np.abs(true) > 1e-8
+    if np.any(nonzero_mask):
+        nonzero_sign_acc = float(np.mean(np.sign(pred[nonzero_mask]) == np.sign(true[nonzero_mask])))
+    else:
+        nonzero_sign_acc = 1.0
+    return {
+        "mean_bias": float(np.mean(pred - true)),
+        "zero_target_frac": float(np.mean(zero_mask)),
+        "negative_target_frac": float(np.mean(negative_mask)),
+        "zero_pred_mean": float(np.mean(pred[zero_mask])) if np.any(zero_mask) else 0.0,
+        "zero_pred_mean_abs": float(np.mean(np.abs(pred[zero_mask]))) if np.any(zero_mask) else 0.0,
+        "negative_pred_mean": float(np.mean(pred[negative_mask])) if np.any(negative_mask) else 0.0,
+        "negative_bias": float(np.mean(pred[negative_mask] - true[negative_mask])) if np.any(negative_mask) else 0.0,
+        "nonzero_sign_acc": nonzero_sign_acc,
+    }
+
+
 def _selection_score(val_metrics: dict[str, float], dataset_stats: dict[str, object], *, proj_l1_score_weight: float = 80.0) -> float:
     coverage_penalty = max(0.0, 0.9 - float(dataset_stats.get("val", {}).get("coverage", 0.0)))
     projected_global_l1 = float(val_metrics.get("projected_global_l1", 0.0))
@@ -847,10 +881,18 @@ def _selection_score(val_metrics: dict[str, float], dataset_stats: dict[str, obj
     reward_corr_penalty = 0.0
     if reward_corr is not None:
         reward_corr_penalty = 0.5 * max(0.0, 0.45 - float(reward_corr))
+    reward_zero_penalty = 0.5 * float(val_metrics.get("reward_zero_pred_mean_abs", 0.0))
+    reward_negative_penalty = 0.25 * max(0.0, float(val_metrics.get("reward_negative_pred_mean", 0.0)))
+    reward_bias_penalty = 0.25 * abs(float(val_metrics.get("reward_mean_bias", 0.0)))
+    reward_sign_penalty = 0.25 * max(0.0, 0.9 - float(val_metrics.get("reward_nonzero_sign_acc", 1.0)))
     return (
         val_metrics["tau_log_mae"]
         + 0.5 * val_metrics["reward_mae"]
         + reward_corr_penalty
+        + reward_zero_penalty
+        + reward_negative_penalty
+        + reward_bias_penalty
+        + reward_sign_penalty
         + 0.5 * max(0.0, 1.0 - val_metrics["change_topk_f1"])
         + 0.5 * max(0.0, 1.0 - val_metrics["projected_change_f1"])
         + max(0.0, 1.0 - val_metrics["projected_changed_type_acc"])
@@ -927,6 +969,47 @@ def _predict_reward_and_duration_outputs(
         "realized_tau_log_sigma": tau_log_sigma,
         "gate_logit": gate_logit,
         "realized_tau_available": False,
+    }
+
+
+def _reward_supervision_losses(
+    reward_hat: torch.Tensor,
+    gate_logit: torch.Tensor,
+    target_reward: torch.Tensor,
+    *,
+    reward_magnitude_weight: float,
+) -> dict[str, torch.Tensor]:
+    reward_nonzero_target = (target_reward.abs() > 1e-6).float()
+    gated_reward = reward_hat * torch.sigmoid(gate_logit)
+    gate_loss = F.binary_cross_entropy_with_logits(gate_logit, reward_nonzero_target)
+    reward_gated_loss = F.smooth_l1_loss(gated_reward, target_reward)
+    nonzero_mask = reward_nonzero_target > 0.5
+    zero_mask = ~nonzero_mask
+    if nonzero_mask.any():
+        reward_magnitude_loss = F.smooth_l1_loss(reward_hat[nonzero_mask], target_reward[nonzero_mask])
+        reward_sign_target = (target_reward[nonzero_mask] > 0).float()
+        reward_sign_loss = F.binary_cross_entropy_with_logits(reward_hat[nonzero_mask], reward_sign_target)
+    else:
+        reward_magnitude_loss = torch.zeros((), device=reward_hat.device)
+        reward_sign_loss = torch.zeros((), device=reward_hat.device)
+    if zero_mask.any():
+        reward_zero_loss = F.smooth_l1_loss(reward_hat[zero_mask], target_reward[zero_mask])
+    else:
+        reward_zero_loss = torch.zeros((), device=reward_hat.device)
+    loss = (
+        reward_gated_loss
+        + 0.25 * gate_loss
+        + 0.5 * reward_magnitude_weight * reward_magnitude_loss
+        + 0.5 * reward_zero_loss
+        + 0.25 * reward_sign_loss
+    )
+    return {
+        "loss": loss,
+        "gated_reward": gated_reward,
+        "gate_loss": gate_loss,
+        "magnitude_loss": reward_magnitude_loss,
+        "zero_loss": reward_zero_loss,
+        "sign_loss": reward_sign_loss,
     }
 
 
@@ -1371,8 +1454,13 @@ def _evaluate(model: MacroDreamerEditModel, loader: DataLoader, device: str, max
                 proj_f1 = 2.0 * proj_precision * proj_recall / max(proj_precision + proj_recall, 1e-6)
                 projected_change_f1_scores.append(float(proj_f1))
 
-    reward_metrics = _compute_metrics(np.asarray(reward_pred), np.asarray(reward_true))
-    tau_metrics = _compute_log_metrics(np.asarray(tau_pred), np.asarray(tau_true))
+    reward_pred_np = np.asarray(reward_pred, dtype=np.float64)
+    reward_true_np = np.asarray(reward_true, dtype=np.float64)
+    tau_pred_np = np.asarray(tau_pred, dtype=np.float64)
+    tau_true_np = np.asarray(tau_true, dtype=np.float64)
+    reward_metrics = _compute_metrics(reward_pred_np, reward_true_np)
+    reward_diagnostics = _compute_reward_diagnostics(reward_pred_np, reward_true_np)
+    tau_metrics = _compute_log_metrics(tau_pred_np, tau_true_np)
     realized_tau_metrics = _compute_lognormal_distribution_metrics(
         np.asarray(realized_tau_mu_pred),
         np.asarray(realized_tau_log_sigma_pred),
@@ -1390,6 +1478,14 @@ def _evaluate(model: MacroDreamerEditModel, loader: DataLoader, device: str, max
         "reward_mae": reward_metrics["mae"],
         "reward_rmse": reward_metrics["rmse"],
         "reward_corr": reward_metrics["corr"],
+        "reward_mean_bias": reward_diagnostics["mean_bias"],
+        "reward_zero_target_frac": reward_diagnostics["zero_target_frac"],
+        "reward_negative_target_frac": reward_diagnostics["negative_target_frac"],
+        "reward_zero_pred_mean": reward_diagnostics["zero_pred_mean"],
+        "reward_zero_pred_mean_abs": reward_diagnostics["zero_pred_mean_abs"],
+        "reward_negative_pred_mean": reward_diagnostics["negative_pred_mean"],
+        "reward_negative_bias": reward_diagnostics["negative_bias"],
+        "reward_nonzero_sign_acc": reward_diagnostics["nonzero_sign_acc"],
         "tau_log_mae": tau_metrics["log_mae"],
         "tau_log_rmse": tau_metrics["log_rmse"],
         "tau_log_corr": tau_metrics["log_corr"],
@@ -1662,16 +1758,13 @@ def _train_epoch(
         prior_edit_loss = prior_edit["mask"] + 0.1 * prior_edit["count"] + (0.5 * prior_proj_mask_loss if compute_proj else 0.0) + prior_edit["type"]
 
         tau_loss = lognormal_nll(tensors["tau_exp"], tau_mu, tau_log_sigma).mean()
-        reward_nonzero_target = (tensors["reward_sum"].abs() > 1e-6).float()
-        gated_reward = reward_hat * torch.sigmoid(gate_logit)
-        gate_loss = F.binary_cross_entropy_with_logits(gate_logit, reward_nonzero_target)
-        reward_gated_loss = F.smooth_l1_loss(gated_reward, tensors["reward_sum"])
-        nonzero_mask = reward_nonzero_target > 0.5
-        if nonzero_mask.any():
-            reward_magnitude_loss = F.smooth_l1_loss(reward_hat[nonzero_mask], tensors["reward_sum"][nonzero_mask])
-        else:
-            reward_magnitude_loss = torch.tensor(0.0, device=device)
-        reward_loss = reward_gated_loss + 0.25 * gate_loss + 0.5 * reward_magnitude_weight * reward_magnitude_loss
+        reward_terms = _reward_supervision_losses(
+            reward_hat,
+            gate_logit,
+            tensors["reward_sum"],
+            reward_magnitude_weight=reward_magnitude_weight,
+        )
+        reward_loss = reward_terms["loss"]
         latent_loss = F.smooth_l1_loss(next_pred, next_global)
         if compute_proj:
             proj_state_loss = _projected_state_alignment_loss(
@@ -1700,14 +1793,13 @@ def _train_epoch(
         prior_tau_loss = lognormal_nll(tensors["tau_exp"], tau_mu_prior, tau_log_sigma_prior).mean()
         realized_tau_loss = lognormal_nll(tensors["tau_real"], realized_tau_mu, realized_tau_log_sigma).mean()
         prior_realized_tau_loss = lognormal_nll(tensors["tau_real"], realized_tau_mu_prior, realized_tau_log_sigma_prior).mean()
-        gated_reward_prior = reward_hat_prior * torch.sigmoid(gate_logit_prior)
-        prior_gate_loss = F.binary_cross_entropy_with_logits(gate_logit_prior, reward_nonzero_target)
-        prior_reward_gated_loss = F.smooth_l1_loss(gated_reward_prior, tensors["reward_sum"])
-        if nonzero_mask.any():
-            prior_reward_magnitude_loss = F.smooth_l1_loss(reward_hat_prior[nonzero_mask], tensors["reward_sum"][nonzero_mask])
-        else:
-            prior_reward_magnitude_loss = torch.tensor(0.0, device=device)
-        prior_reward_loss = prior_reward_gated_loss + 0.25 * prior_gate_loss + 0.5 * reward_magnitude_weight * prior_reward_magnitude_loss
+        prior_reward_terms = _reward_supervision_losses(
+            reward_hat_prior,
+            gate_logit_prior,
+            tensors["reward_sum"],
+            reward_magnitude_weight=reward_magnitude_weight,
+        )
+        prior_reward_loss = prior_reward_terms["loss"]
         if tau_supervision_mode == "posterior_only":
             combined_tau_loss = tau_loss
             combined_realized_tau_loss = realized_tau_loss
@@ -1776,10 +1868,37 @@ def _build_loader(samples: list[MacroSegmentSample], batch_size: int, shuffle: b
     return DataLoader(MacroSegmentDataset(samples), batch_size=batch_size, shuffle=shuffle, collate_fn=lambda batch: batch)
 
 
+def _initialize_reward_heads(model: MacroDreamerEditModel, train_samples: list[MacroSegmentSample]) -> None:
+    if not train_samples:
+        return
+    reward_values = np.asarray([sample.reward_sum for sample in train_samples], dtype=np.float64)
+    nonzero_frac = float(np.mean(np.abs(reward_values) > 1e-6))
+    nonzero_frac = min(max(nonzero_frac, 0.01), 0.99)
+    gate_bias = math.log(nonzero_frac) - math.log(1.0 - nonzero_frac)
+    zero_frac = float(np.mean(np.isclose(reward_values, 0.0, atol=1e-8)))
+    pos_frac = float(np.mean(reward_values > 1e-6))
+    neg_frac = float(np.mean(reward_values < -1e-6))
+    with torch.no_grad():
+        model.reward_head[-1].weight.zero_()
+        model.reward_head[-1].bias.zero_()
+        model.reward_context_head[-1].weight.zero_()
+        model.reward_context_head[-1].bias.zero_()
+        model.reward_gate_head[-1].weight.zero_()
+        model.reward_gate_head[-1].bias.fill_(gate_bias)
+        if hasattr(model, "reward_gate_context_head"):
+            model.reward_gate_context_head[-1].weight.zero_()
+            model.reward_gate_context_head[-1].bias.zero_()
+    print(
+        "  Reward init: "
+        f"mean={float(np.mean(reward_values)):.3f} zero_frac={zero_frac:.3f} "
+        f"pos_frac={pos_frac:.3f} neg_frac={neg_frac:.3f} "
+        f"nonzero_frac={nonzero_frac:.3f} gate_bias={gate_bias:.3f}"
+    )
+
+
 def _initialize_output_heads(model: MacroDreamerEditModel, train_samples: list[MacroSegmentSample]) -> None:
     if not train_samples:
         return
-    reward_mean = float(np.mean([sample.reward_sum for sample in train_samples]))
     tau_residuals = []
     realized_tau_residuals = []
     for sample in train_samples:
@@ -1800,15 +1919,6 @@ def _initialize_output_heads(model: MacroDreamerEditModel, train_samples: list[M
         model.change_head.bias.fill_(change_bias)
         model.type_head.weight.zero_()
         model.type_head.bias.zero_()
-        model.reward_head[-1].weight.zero_()
-        model.reward_head[-1].bias.fill_(reward_mean)
-        # Initialize gate bias to dataset zero/nonzero ratio (log-odds)
-        nonzero_frac = float(np.mean([abs(s.reward_sum) > 1e-6 for s in train_samples]))
-        nonzero_frac = min(max(nonzero_frac, 0.01), 0.99)  # clamp for numerical stability
-        gate_bias = math.log(nonzero_frac) - math.log(1.0 - nonzero_frac)
-        model.reward_gate_head[-1].weight.zero_()
-        model.reward_gate_head[-1].bias.fill_(gate_bias)
-        print(f"  Gate init: nonzero_frac={nonzero_frac:.3f}, gate_bias={gate_bias:.3f}")
         model.duration_head[-1].weight.zero_()
         model.duration_head[-1].bias[0] = tau_residual_mean
         model.duration_head[-1].bias[1] = float(np.log(tau_residual_std))
@@ -1816,6 +1926,7 @@ def _initialize_output_heads(model: MacroDreamerEditModel, train_samples: list[M
         model.realized_duration_head[-1].bias[0] = realized_tau_residual_mean
         model.realized_duration_head[-1].bias[1] = float(np.log(realized_tau_residual_std))
         model.realized_tau_head_loaded = True
+    _initialize_reward_heads(model, train_samples)
 
 
 def parse_args() -> argparse.Namespace:
@@ -1873,6 +1984,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reward_magnitude_weight", type=float, default=1.0,
                         help="Extra multiplier for reward magnitude loss relative to gate loss (default: 1.0). "
                              "Higher values prioritise predicting correct dE amplitude over zero/nonzero classification.")
+    parser.add_argument("--reward_branch_version", type=int, default=2,
+                        help="Version tag for reward/gate architecture and initialization. Changing it forces reward-head recalibration on resume.")
     parser.add_argument("--realized_tau_weight", type=float, default=0.25,
                         help="Auxiliary loss weight for the tau_real lognormal distribution head (default: 0.25). "
                              "tau_exp remains the primary time-supervision target.")
@@ -2076,6 +2189,21 @@ def main() -> None:
         except ValueError as e:
             print(f"Resume: optimizer state incompatible ({e}), reinitializing optimizer (weights loaded)")
         start_epoch = int(ckpt["epoch"]) + 1
+        if not args.eval_only:
+            resume_reward_branch_version = int(ckpt.get("args", {}).get("reward_branch_version", 1))
+            reward_branch_missing = any(
+                key.startswith("reward_context_head.") or key.startswith("reward_gate_context_head.")
+                for key in missing
+            )
+            if resume_reward_branch_version != int(args.reward_branch_version) or reward_branch_missing:
+                _initialize_reward_heads(model, train_samples)
+                if resume_reward_branch_version != int(args.reward_branch_version):
+                    print(
+                        "Resume: reinitialized reward heads due to reward_branch_version mismatch "
+                        f"({resume_reward_branch_version} -> {int(args.reward_branch_version)})"
+                    )
+                else:
+                    print("Resume: reinitialized reward heads because reward context parameters were missing")
         if not args.eval_only:
             allow_checkpoint_best_score_fallback = Path(args.resume).resolve().parent == save_dir.resolve()
             best_score, score_source = _initialize_best_score_from_saved_best(

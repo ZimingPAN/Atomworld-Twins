@@ -198,6 +198,8 @@ def main() -> None:
     env.reset()
 
     pred_reward_sum = []
+    pred_reward_raw = []
+    pred_reward_gate = []
     true_reward_sum = []
     pred_tau_exp = []
     true_tau_exp = []
@@ -252,6 +254,8 @@ def main() -> None:
                 current_types=tensors["current_types"],
                 candidate_mask=tensors["candidate_mask"],
             )
+            reward_raw = float(duration_outputs["reward"].item())
+            reward_gate_prob = float(torch.sigmoid(duration_outputs["gate_logit"]).item())
             pred_reward = float((duration_outputs["reward"] * torch.sigmoid(duration_outputs["gate_logit"])).item())
             pred_expected_tau = float(torch.exp(duration_outputs["expected_tau_mu"]).item())
             pred_realized_tau_value = float(torch.exp(duration_outputs["realized_tau_mu"]).item())
@@ -261,6 +265,8 @@ def main() -> None:
                 break
 
             pred_reward_sum.append(pred_reward)
+            pred_reward_raw.append(reward_raw)
+            pred_reward_gate.append(reward_gate_prob)
             true_reward_sum.append(float(teacher_segment["reward_sum"]))
             pred_tau_exp.append(pred_expected_tau)
             true_tau_exp.append(float(teacher_segment["tau_exp"]))
@@ -271,6 +277,8 @@ def main() -> None:
                     "index": segment_idx,
                     "segment_k": horizon_k,
                     "predicted_reward_sum": pred_reward,
+                    "predicted_reward_raw": reward_raw,
+                    "predicted_reward_gate_prob": reward_gate_prob,
                     "traditional_kmc_reward_sum": float(teacher_segment["reward_sum"]),
                     "predicted_expected_tau": pred_expected_tau,
                     "traditional_kmc_expected_tau": float(teacher_segment["tau_exp"]),
@@ -307,6 +315,7 @@ def main() -> None:
             "realized_tau_head_loaded": bool(getattr(model, "realized_tau_head_loaded", True)),
         },
         "reward_sum": _compute_metrics(pred_reward_sum_np, true_reward_sum_np) if len(segments) > 0 else {},
+        "reward_diagnostics": mod._compute_reward_diagnostics(pred_reward_sum_np, true_reward_sum_np) if len(segments) > 0 else {},
         "tau_expected": (
             {**_compute_metrics(pred_tau_exp_np, true_tau_exp_np), **_compute_log_metrics(pred_tau_exp_np, true_tau_exp_np)}
             if len(segments) > 0

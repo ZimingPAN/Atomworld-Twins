@@ -20,9 +20,11 @@ from dreamer4.macro_edit import MacroDreamerEditModel, macro_duration_baseline_l
 from train_dreamer_macro_edit import (
     MacroKMCEnv,
     _build_loader,
+    _compute_reward_diagnostics,
     _collect_segments,
     _edit_supervision_losses,
     _evaluate,
+    _initialize_reward_heads,
     _initialize_best_score_from_saved_best,
     _matched_pair_count_loss,
     _projected_mask_distill_loss,
@@ -312,6 +314,46 @@ def test_macro_duration_baseline_matches_k_over_total_rate():
     assert torch.allclose(baseline, expected, atol=1e-6)
 
 
+def test_reward_diagnostics_capture_zero_drift_and_sign_errors():
+    diagnostics = _compute_reward_diagnostics(
+        pred_reward=np.asarray([0.6, 0.2, -0.1, 0.0], dtype=np.float64),
+        true_reward=np.asarray([0.0, -1.0, 1.0, 0.0], dtype=np.float64),
+    )
+
+    assert diagnostics["zero_target_frac"] == pytest.approx(0.5)
+    assert diagnostics["negative_target_frac"] == pytest.approx(0.25)
+    assert diagnostics["zero_pred_mean_abs"] == pytest.approx(0.3)
+    assert diagnostics["negative_pred_mean"] == pytest.approx(0.2)
+    assert diagnostics["nonzero_sign_acc"] == pytest.approx(0.0)
+
+
+def test_selection_score_penalizes_reward_zero_drift():
+    base_metrics = {
+        "tau_log_mae": 0.1,
+        "reward_mae": 0.5,
+        "reward_corr": 0.6,
+        "reward_zero_pred_mean_abs": 0.0,
+        "reward_negative_pred_mean": -0.2,
+        "reward_mean_bias": 0.0,
+        "reward_nonzero_sign_acc": 1.0,
+        "change_topk_f1": 0.95,
+        "projected_change_f1": 0.95,
+        "projected_changed_type_acc": 0.95,
+        "unchanged_vacancy_copy_acc": 0.99,
+        "projected_global_l1": 0.001,
+        "reachability_violation_rate": 0.0,
+    }
+    dataset_stats = {"val": {"coverage": 0.99}}
+
+    drifted_metrics = dict(base_metrics)
+    drifted_metrics["reward_zero_pred_mean_abs"] = 0.5
+    drifted_metrics["reward_negative_pred_mean"] = 0.2
+    drifted_metrics["reward_mean_bias"] = 0.3
+    drifted_metrics["reward_nonzero_sign_acc"] = 0.5
+
+    assert _selection_score(drifted_metrics, dataset_stats) > _selection_score(base_metrics, dataset_stats)
+
+
 def test_predict_reward_and_duration_uses_physical_baseline_when_residual_is_zero():
     model = MacroDreamerEditModel(
         max_vacancies=4,
@@ -344,6 +386,39 @@ def test_predict_reward_and_duration_uses_physical_baseline_when_residual_is_zer
     )
 
     assert torch.allclose(tau_mu, torch.tensor([math.log(4.0 / 100.0)], dtype=torch.float32), atol=1e-6)
+
+
+def test_initialize_reward_heads_zero_centers_reward_branch():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+
+    _initialize_reward_heads(
+        model,
+        [
+            SimpleNamespace(reward_sum=0.0),
+            SimpleNamespace(reward_sum=1.0),
+            SimpleNamespace(reward_sum=-1.0),
+        ],
+    )
+
+    assert torch.allclose(model.reward_head[-1].bias, torch.zeros_like(model.reward_head[-1].bias))
+    assert torch.allclose(model.reward_context_head[-1].bias, torch.zeros_like(model.reward_context_head[-1].bias))
+    assert torch.allclose(model.reward_gate_context_head[-1].bias, torch.zeros_like(model.reward_gate_context_head[-1].bias))
+    assert torch.isfinite(model.reward_gate_head[-1].bias).all()
 
 
 def test_predict_reward_and_durations_returns_expected_and_realized_heads():
