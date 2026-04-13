@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Callable
+from typing import Callable, Optional
 import sys
 
 import math
@@ -109,7 +109,7 @@ Predictions = namedtuple('Predictions', ('flow', 'proprioception', 'state'))
 
 Embeds = namedtuple('Embeds', ['agent', 'state_pred'])
 
-MaybeTensor = Tensor | None
+MaybeTensor = Optional[Tensor]
 
 @dataclass
 class Experience:

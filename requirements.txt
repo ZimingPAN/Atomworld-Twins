@@ -1,0 +1,32 @@
+# AtomWorld-Twins core dependencies
+# Scope: Dreamer macro-edit + kmcteacher_backend + tests + plotting scripts.
+# Recommended Python: 3.10 or 3.11.
+# For a clean public setup, run `python -m pip install -r requirements.txt`.
+# If your machine needs a site-specific PyTorch build, install torch / torchvision
+# first, then run the same command again.
+
+numpy==1.26.4
+scipy==1.13.1
+pydantic==2.12.5
+
+torch>=2.8,<2.9
+torchvision>=0.23,<0.24
+
+accelerate==1.10.1
+adam-atan2-pytorch==0.2.8
+assoc-scan==0.0.3
+discrete-continuous-embed-readout==0.2.2
+einx==0.3.0
+einops==0.8.2
+ema-pytorch==0.7.9
+hl-gauss-pytorch==0.2.3
+hyper-connections==0.4.9
+torch-einops-utils==0.0.30
+vit-pytorch==1.19.4
+x-mlps-pytorch==0.0.29
+
+pytest==6.2.5
+matplotlib==3.9.4
+
+# Optional only if you need the gym wrapper in kmcteacher_backend/RL4KMC/envs/kmc_env.py
+# gym==0.26.2
