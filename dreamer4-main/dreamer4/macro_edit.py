@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-ROOT = Path(__file__).resolve().parents[2] / "RLKMC-MASSIVE-main"
+ROOT = Path(__file__).resolve().parents[2] / "kmcteacher_backend"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 

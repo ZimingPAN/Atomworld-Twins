@@ -4,6 +4,10 @@ AtomWorld-Twins is a paper-facing repository for a teacher-student Dreamer macro
 
 AtomWorld-Twins 面向一篇聚焦 teacher-student Dreamer macro world model 的论文。核心主张很明确：传统原子模拟的瓶颈不只是速度，还在于它长期被困在逐微观事件推进的分辨率里；如果希望在保持时间准确的同时到达决定材料长期演化的稀疏关键状态，就应该把问题重新表述为一个带时间语义的宏步 world model 问题。
 
+Public repository note. The public tree ships only a minimal paper-facing teacher backend subset under `kmcteacher_backend/`. The full historical `RLKMC-MASSIVE-main/` backend is kept as a private local repository and is not part of the public GitHub contents.
+
+公开仓库说明。当前公开树只保留 `kmcteacher_backend/` 里的最小 paper-facing teacher backend 子集；完整历史 backend `RLKMC-MASSIVE-main/` 作为本地私有仓库保留，不进入公开 GitHub。
+
 
 
 ## English
@@ -63,7 +67,8 @@ Environment:
 
 - Python 3.10+
 - PyTorch 2.0+
-- A working environment for the Dreamer and RLKMC dependencies already included in this repository setup
+- A working environment for the Dreamer and the public `kmcteacher_backend/` teacher backend subset already included in this repository setup
+- Historical PPO and full RLKMC baseline workflows still require a local private checkout of `RLKMC-MASSIVE-main/`
 
 Train the macro world model:
 
@@ -150,7 +155,8 @@ Student：
 
 - Python 3.10+
 - PyTorch 2.0+
-- 使用当前仓库中 Dreamer 与 RLKMC 相关依赖所对应的可运行环境
+- 使用当前仓库中 Dreamer 与公开 `kmcteacher_backend/` teacher backend 子集所对应的可运行环境
+- 历史 PPO 与完整 RLKMC baseline 流程仍需要本地私有的 `RLKMC-MASSIVE-main/` checkout
 
 训练宏步世界模型：
 

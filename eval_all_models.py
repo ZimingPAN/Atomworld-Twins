@@ -9,7 +9,9 @@ import torch
 
 # Paths
 ROOT = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(ROOT, "RLKMC-MASSIVE-main"))
+KMC_BACKEND = os.path.join(ROOT, "kmcteacher_backend")
+PRIVATE_RLKMC = os.path.join(ROOT, "RLKMC-MASSIVE-main")
+sys.path.insert(0, KMC_BACKEND)
 sys.path.insert(0, os.path.join(ROOT, "LightZero-main"))
 sys.path.insert(0, os.path.join(ROOT, "dreamer4-main"))
 pydeps = os.path.expanduser("/home/likun/panziming/pydeps")
@@ -18,6 +20,17 @@ if os.path.isdir(pydeps):
 
 # KMCEnvWrapper is defined inside each training script, import from the appropriate one
 # We'll import lazily per model to avoid conflicts
+
+
+def _require_private_rlkmc_checkout():
+    if os.path.isdir(PRIVATE_RLKMC):
+        if PRIVATE_RLKMC not in sys.path:
+            sys.path.insert(0, PRIVATE_RLKMC)
+        return
+    raise RuntimeError(
+        "Historical PPO evaluation requires a local private RLKMC-MASSIVE-main checkout; "
+        "the public repository only ships the minimal kmcteacher_backend teacher subset."
+    )
 
 
 def build_eval_cfg(args):
@@ -51,7 +64,7 @@ def infer_dreamer_feature_flags(state_dict):
 
 
 def eval_ppo(args, eval_cfg, device):
-    sys.path.insert(0, os.path.join(ROOT, "RLKMC-MASSIVE-main"))
+    _require_private_rlkmc_checkout()
     from train_ppo_standalone import PPOGNNAgent, KMCEnvWrapper
     # Need one env to get dims
     env = KMCEnvWrapper(eval_cfg)

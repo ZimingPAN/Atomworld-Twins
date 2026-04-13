@@ -12,7 +12,7 @@ from dreamer4.dreamer4 import DynamicsWorldModel
 
 
 def _ensure_rlkmc_path() -> None:
-    root = Path(__file__).resolve().parents[2] / "RLKMC-MASSIVE-main"
+    root = Path(__file__).resolve().parents[2] / "kmcteacher_backend"
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
 

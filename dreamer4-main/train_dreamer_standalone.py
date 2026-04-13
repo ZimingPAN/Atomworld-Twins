@@ -22,7 +22,7 @@ import torch.nn.functional as F
 
 # ---- path setup ----
 ROOT = Path(__file__).resolve().parents[0]
-RLKMC = ROOT.parent / "RLKMC-MASSIVE-main"
+RLKMC = ROOT.parent / "kmcteacher_backend"
 LIGHTZERO = ROOT.parent / "LightZero-main"
 for p in [str(ROOT), str(LIGHTZERO), str(RLKMC)]:
     if p not in sys.path:

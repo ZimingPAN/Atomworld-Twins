@@ -11,7 +11,7 @@ import numpy as np
 import torch
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(ROOT, "RLKMC-MASSIVE-main"))
+sys.path.insert(0, os.path.join(ROOT, "kmcteacher_backend"))
 sys.path.insert(0, os.path.join(ROOT, "LightZero-main"))
 sys.path.insert(0, os.path.join(ROOT, "dreamer4-main"))
 pydeps = os.path.expanduser("/home/likun/panziming/pydeps")

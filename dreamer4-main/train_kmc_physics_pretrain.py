@@ -20,7 +20,7 @@ def _ensure_roots() -> None:
     lightzero_root = root.parent / "LightZero-main"
     if str(lightzero_root) not in sys.path:
         sys.path.insert(0, str(lightzero_root))
-    rlkmc_root = root.parent / "RLKMC-MASSIVE-main"
+    rlkmc_root = root.parent / "kmcteacher_backend"
     if str(rlkmc_root) not in sys.path:
         sys.path.insert(0, str(rlkmc_root))
 

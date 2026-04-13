@@ -4,20 +4,39 @@ import argparse
 import json
 from pathlib import Path
 import sys
+from typing import Any
 
 import numpy as np
 import torch
 
 
 ROOT = Path(__file__).resolve().parent
-RLKMC = ROOT / "RLKMC-MASSIVE-main"
+KMC_BACKEND = ROOT / "kmcteacher_backend"
+PRIVATE_RLKMC = ROOT / "RLKMC-MASSIVE-main"
 DREAMER = ROOT / "dreamer4-main"
-for path in [str(ROOT), str(RLKMC), str(DREAMER)]:
+for path in [str(ROOT), str(KMC_BACKEND), str(DREAMER)]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
+if PRIVATE_RLKMC.is_dir() and str(PRIVATE_RLKMC) not in sys.path:
+    sys.path.insert(0, str(PRIVATE_RLKMC))
+
 import train_dreamer_macro_edit as macro_mod
-from train_ppo_standalone import KMCEnvWrapper, PPOGNNAgent
+
+if PRIVATE_RLKMC.is_dir():
+    from train_ppo_standalone import KMCEnvWrapper, PPOGNNAgent
+else:
+    KMCEnvWrapper = Any
+    PPOGNNAgent = Any
+
+
+def _require_private_rlkmc_checkout() -> None:
+    if PRIVATE_RLKMC.is_dir():
+        return
+    raise RuntimeError(
+        "Historical PPO evaluation requires a local private RLKMC-MASSIVE-main checkout; "
+        "the public repository only ships the minimal kmcteacher_backend teacher subset."
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -150,6 +169,7 @@ def _build_env_cfg(config: dict[str, object]) -> dict[str, object]:
 
 
 def _build_agent(config: dict[str, object], checkpoint_path: Path, device: torch.device) -> PPOGNNAgent:
+    _require_private_rlkmc_checkout()
     action_space_size = int(config["max_vacancies"]) * 8
     agent = PPOGNNAgent(
         max_vacancies=int(config["max_vacancies"]),
@@ -170,6 +190,7 @@ def _build_agent(config: dict[str, object], checkpoint_path: Path, device: torch
 
 def main() -> None:
     args = parse_args()
+    _require_private_rlkmc_checkout()
     checkpoint_path = Path(args.checkpoint)
     config_path = Path(args.config)
     cache_path = Path(args.cache)

@@ -18,7 +18,7 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 ROOT = Path(__file__).resolve().parents[0]
-RLKMC = ROOT.parent / "RLKMC-MASSIVE-main"
+RLKMC = ROOT.parent / "kmcteacher_backend"
 LIGHTZERO = ROOT.parent / "LightZero-main"
 for path in [str(ROOT), str(RLKMC), str(LIGHTZERO)]:
     if path not in sys.path:
