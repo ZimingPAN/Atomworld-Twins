@@ -11,11 +11,20 @@ __pycache__/
 # 忽略 Mac 系统产生的隐藏文件
 .DS_Store
 
+# 忽略本地工具与临时目录
+/.claude/
+/.copilot_tmp/
+
+# 忽略训练/评估生成结果
+/dreamer4-main/results/
 /dreamer4-main/results/**/segments.pt
 
 /doc/
 
 /results/
+
+# 暂不将 LightZero 基线代码推送到远端
+/LightZero-main/
 
 AGENTS.md
 
