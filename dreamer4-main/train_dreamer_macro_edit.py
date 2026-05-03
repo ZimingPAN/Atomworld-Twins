@@ -34,6 +34,7 @@ from dreamer4.macro_edit import (
     lognormal_nll,
     macro_duration_baseline_log_tau,
     project_types_by_inventory,
+    projected_edit_logits_from_types,
     teacher_path_summary_dim,
 )
 
@@ -75,6 +76,61 @@ class MacroSegmentDataset(Dataset):
 
     def __getitem__(self, idx: int) -> MacroSegmentSample:
         return self.samples[idx]
+
+
+def _normalize_segment_ks(segment_k: int, segment_ks: Optional[list[int]] = None) -> list[int]:
+    raw = segment_ks if segment_ks else [segment_k]
+    normalized = sorted({int(k) for k in raw})
+    if not normalized or any(k <= 0 for k in normalized):
+        raise ValueError(f"segment horizons must be positive integers, got {raw}")
+    return normalized
+
+
+def _segment_ks_from_args(args: argparse.Namespace) -> list[int]:
+    return _normalize_segment_ks(int(args.segment_k), getattr(args, "segment_ks", None))
+
+
+def _segment_ks_from_ckpt_args(ckpt_args: dict[str, object]) -> list[int]:
+    if ckpt_args.get("segment_ks"):
+        return _normalize_segment_ks(int(ckpt_args.get("segment_k", 4)), list(ckpt_args["segment_ks"]))
+    return _normalize_segment_ks(int(ckpt_args.get("segment_k", 4)), None)
+
+
+def _summary_horizon_k_from_segment_ks(segment_ks: list[int]) -> int:
+    return max(segment_ks)
+
+
+def _split_segments_per_k(args: argparse.Namespace, split: str, segment_ks: list[int]) -> int:
+    if split == "train":
+        explicit = getattr(args, "train_segments_per_k", None)
+        fallback = int(args.train_segments)
+    elif split == "val":
+        explicit = getattr(args, "val_segments_per_k", None)
+        fallback = int(args.val_segments)
+    else:
+        raise ValueError(f"unknown split: {split}")
+    if explicit is not None:
+        return int(explicit)
+    return fallback if len(segment_ks) == 1 else fallback
+
+
+def _split_total_segments(args: argparse.Namespace, split: str, segment_ks: list[int]) -> int:
+    return int(_split_segments_per_k(args, split, segment_ks) * len(segment_ks))
+
+
+def _path_fingerprint(path: Optional[str]) -> dict[str, object] | None:
+    if not path:
+        return None
+    ckpt_path = Path(path)
+    if not ckpt_path.exists():
+        return {"path": str(path), "exists": False}
+    stat = ckpt_path.stat()
+    return {
+        "path": str(path),
+        "exists": True,
+        "size": int(stat.st_size),
+        "mtime_ns": int(stat.st_mtime_ns),
+    }
 
 
 def _build_args(cfg: dict):
@@ -174,6 +230,20 @@ def _positions_to_type_lookup(vacancies: np.ndarray, cu_atoms: np.ndarray) -> tu
     vac_set = {tuple(map(int, pos)) for pos in vacancies.tolist()}
     cu_set = {tuple(map(int, pos)) for pos in cu_atoms.tolist()}
     return vac_set, cu_set
+
+
+def _changed_positions_between(
+    start_vac_set: set[tuple[int, int, int]],
+    start_cu_set: set[tuple[int, int, int]],
+    end_vac_set: set[tuple[int, int, int]],
+    end_cu_set: set[tuple[int, int, int]],
+) -> set[tuple[int, int, int]]:
+    positions = start_vac_set | start_cu_set | end_vac_set | end_cu_set
+    return {
+        pos
+        for pos in positions
+        if _type_from_lookup(pos, start_vac_set, start_cu_set) != _type_from_lookup(pos, end_vac_set, end_cu_set)
+    }
 
 
 def _type_from_lookup(pos: tuple[int, int, int], vac_set: set[tuple[int, int, int]], cu_set: set[tuple[int, int, int]]) -> int:
@@ -287,13 +357,17 @@ def _teacher_path_summary(
     horizon_k: int,
     *,
     include_stepwise_features: bool = True,
+    summary_horizon_k: Optional[int] = None,
 ) -> np.ndarray:
+    summary_horizon = int(summary_horizon_k if summary_horizon_k is not None else horizon_k)
+    if horizon_k > summary_horizon:
+        raise ValueError(f"horizon_k={horizon_k} exceeds summary_horizon_k={summary_horizon}")
     direction_hist = np.zeros((8,), dtype=np.float32)
     moving_hist = np.zeros((NUM_SITE_TYPES,), dtype=np.float32)
     log_rates = []
     delta_es = []
-    step_log_expected_dt = np.full((horizon_k,), -27.0, dtype=np.float32)
-    step_delta_es = np.zeros((horizon_k,), dtype=np.float32)
+    step_log_expected_dt = np.full((summary_horizon,), -27.0, dtype=np.float32)
+    step_delta_es = np.zeros((summary_horizon,), dtype=np.float32)
     touched = set()
     vacancy_ids = set()
     for step_idx, info in enumerate(path_infos[:horizon_k]):
@@ -311,7 +385,7 @@ def _teacher_path_summary(
     if path_infos:
         direction_hist /= len(path_infos)
         moving_hist /= len(path_infos)
-    summary = np.zeros((teacher_path_summary_dim(horizon_k, include_stepwise_features=include_stepwise_features),), dtype=np.float32)
+    summary = np.zeros((teacher_path_summary_dim(summary_horizon, include_stepwise_features=include_stepwise_features),), dtype=np.float32)
     summary[:8] = direction_hist
     summary[8:11] = moving_hist
     summary[11] = float(np.mean(log_rates)) if log_rates else -27.0
@@ -322,8 +396,8 @@ def _teacher_path_summary(
     summary[16] = float(len(vacancy_ids) / max(len(path_infos), 1)) if path_infos else 0.0
     summary[17] = float(len(path_infos) / max(horizon_k, 1))
     if include_stepwise_features:
-        summary[18 : 18 + horizon_k] = step_log_expected_dt
-        summary[18 + horizon_k : 18 + 2 * horizon_k] = step_delta_es
+        summary[18 : 18 + summary_horizon] = step_log_expected_dt
+        summary[18 + summary_horizon : 18 + 2 * summary_horizon] = step_delta_es
     return summary
 
 
@@ -457,8 +531,10 @@ def _collect_segments(
     rng: np.random.Generator,
     max_attempt_multiplier: int = 20,
     include_stepwise_path_summary: bool = True,
+    summary_horizon_k: Optional[int] = None,
     max_segments_per_rollout: int = 50,
     teacher_candidate_neighbor_depth: int = 1,
+    teacher_candidate_augmentation: bool = True,
     teacher_mode: str = "kmc",
     neural_teacher: Optional[torch.nn.Module] = None,
     neural_teacher_device: str = "cpu",
@@ -533,19 +609,30 @@ def _collect_segments(
             segments_since_reset = 0
             stall_attempts = 0
             continue
-        candidate_positions, depth_map, seeds = _augment_candidate_positions_with_teacher_path(
-            candidate_positions=candidate_positions,
-            depth_map=depth_map,
-            seeds=seeds,
-            touched_positions=touched_positions,
-            box=np.asarray(env.env.dims, dtype=np.int32),
-            nn1=np.asarray(env.env.NN1, dtype=np.int32),
-            horizon_k=horizon_k,
-            max_candidate_sites=max_candidate_sites,
-            teacher_neighbor_depth=teacher_candidate_neighbor_depth,
-        )
+        if teacher_candidate_augmentation:
+            candidate_positions, depth_map, seeds = _augment_candidate_positions_with_teacher_path(
+                candidate_positions=candidate_positions,
+                depth_map=depth_map,
+                seeds=seeds,
+                touched_positions=touched_positions,
+                box=np.asarray(env.env.dims, dtype=np.int32),
+                nn1=np.asarray(env.env.NN1, dtype=np.int32),
+                horizon_k=horizon_k,
+                max_candidate_sites=max_candidate_sites,
+                teacher_neighbor_depth=teacher_candidate_neighbor_depth,
+            )
+        end_vacancies = env.env.get_vacancy_array().astype(np.int32)
+        end_cu = env.env.get_cu_array().astype(np.int32)
+        end_vac_set, end_cu_set = _positions_to_type_lookup(end_vacancies, end_cu)
+        changed_positions = _changed_positions_between(start_vac_set, start_cu_set, end_vac_set, end_cu_set)
+        if not changed_positions:
+            stats["skipped_noop"] += 1
+            env, obs = restart_env(env)
+            segments_since_reset = 0
+            stall_attempts = 0
+            continue
         candidate_set = set(candidate_positions)
-        if not touched_positions.issubset(candidate_set):
+        if not changed_positions.issubset(candidate_set):
             stats["skipped_uncovered"] += 1
             stall_attempts += 1
             if stall_attempts >= max_stall_attempts:
@@ -556,9 +643,6 @@ def _collect_segments(
                 obs = next_obs
             continue
 
-        end_vacancies = env.env.get_vacancy_array().astype(np.int32)
-        end_cu = env.env.get_cu_array().astype(np.int32)
-        end_vac_set, end_cu_set = _positions_to_type_lookup(end_vacancies, end_cu)
         positions, nearest_offsets, reach_depth, is_start_vacancy, current_types, target_types, changed_mask = _build_patch_features(
             candidate_positions=candidate_positions,
             depth_map=depth_map,
@@ -582,6 +666,7 @@ def _collect_segments(
             max_candidate_sites=max_candidate_sites,
             horizon_k=horizon_k,
             include_stepwise_features=include_stepwise_path_summary,
+            summary_horizon_k=summary_horizon_k,
         )
         mask = np.zeros((max_candidate_sites,), dtype=np.float32)
         mask[: len(candidate_positions)] = 1.0
@@ -622,7 +707,8 @@ def _collect_segments(
                         }
                     },
                     ensure_ascii=False,
-                )
+                ),
+                flush=True,
             )
         stall_attempts = 0
         segments_since_reset += 1
@@ -634,6 +720,680 @@ def _collect_segments(
     denom = max(len(samples), 1)
     stats["coverage"] = float(len(samples) / max(stats["attempts"], 1))
     stats["avg_candidate_size"] = float(stats["candidate_size_sum"] / denom)
+    return samples, stats
+
+
+def _aggregate_collection_stats(samples_by_k: dict[int, list[MacroSegmentSample]], stats_by_k: dict[int, dict[str, float]]) -> dict[str, object]:
+    total_samples = sum(len(samples) for samples in samples_by_k.values())
+    aggregate: dict[str, object] = {"by_k": {}}
+    numeric_keys = [
+        "attempts",
+        "skipped_uncovered",
+        "skipped_terminal",
+        "skipped_noop",
+        "candidate_size_sum",
+    ]
+    for key in numeric_keys:
+        aggregate[key] = float(sum(float(stats_by_k[k].get(key, 0.0)) for k in stats_by_k))
+    attempts = float(aggregate.get("attempts", 0.0))
+    aggregate["samples"] = int(total_samples)
+    aggregate["coverage"] = float(total_samples / max(attempts, 1.0))
+    aggregate["avg_candidate_size"] = float(
+        sum(float(stats_by_k[k].get("candidate_size_sum", 0.0)) for k in stats_by_k) / max(total_samples, 1)
+    )
+    for k in sorted(stats_by_k):
+        per_k = dict(stats_by_k[k])
+        per_k["samples"] = int(len(samples_by_k[k]))
+        aggregate["by_k"][str(k)] = per_k
+    return aggregate
+
+
+def _collect_segments_for_horizons(
+    *,
+    env_cfg: dict,
+    segment_ks: list[int],
+    num_segments_per_k: int,
+    max_seed_vacancies: int,
+    max_candidate_sites: int,
+    seed: int,
+    include_stepwise_path_summary: bool,
+    summary_horizon_k: int,
+    max_segments_per_rollout: int,
+    teacher_candidate_neighbor_depth: int,
+    teacher_candidate_augmentation: bool,
+    teacher_mode: str,
+    neural_teacher: Optional[torch.nn.Module],
+    neural_teacher_device: str,
+    neural_teacher_temperature: float,
+    neural_teacher_epsilon: float,
+) -> tuple[list[MacroSegmentSample], dict[str, object]]:
+    all_samples: list[MacroSegmentSample] = []
+    samples_by_k: dict[int, list[MacroSegmentSample]] = {}
+    stats_by_k: dict[int, dict[str, float]] = {}
+    for offset, horizon_k in enumerate(segment_ks):
+        env = MacroKMCEnv(copy.deepcopy(env_cfg))
+        rng = np.random.default_rng(seed + 1009 * offset)
+        samples, stats = _collect_segments(
+            env=env,
+            num_segments=num_segments_per_k,
+            horizon_k=horizon_k,
+            max_seed_vacancies=max_seed_vacancies,
+            max_candidate_sites=max_candidate_sites,
+            rng=rng,
+            include_stepwise_path_summary=include_stepwise_path_summary,
+            summary_horizon_k=summary_horizon_k,
+            max_segments_per_rollout=max_segments_per_rollout,
+            teacher_candidate_neighbor_depth=teacher_candidate_neighbor_depth,
+            teacher_candidate_augmentation=teacher_candidate_augmentation,
+            teacher_mode=teacher_mode,
+            neural_teacher=neural_teacher,
+            neural_teacher_device=neural_teacher_device,
+            neural_teacher_temperature=neural_teacher_temperature,
+            neural_teacher_epsilon=neural_teacher_epsilon,
+        )
+        samples_by_k[horizon_k] = samples
+        stats_by_k[horizon_k] = stats
+        all_samples.extend(samples)
+    return all_samples, _aggregate_collection_stats(samples_by_k, stats_by_k)
+
+
+def _ckpt_args_dict(raw_args: object) -> dict[str, object]:
+    if isinstance(raw_args, dict):
+        return dict(raw_args)
+    if hasattr(raw_args, "__dict__"):
+        return dict(vars(raw_args))
+    raise TypeError(f"unsupported checkpoint args type: {type(raw_args)!r}")
+
+
+def _build_planner_model_from_checkpoint(
+    checkpoint_path: str,
+    device: str,
+) -> tuple[MacroDreamerEditModel, dict[str, object]]:
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    ckpt_args = _ckpt_args_dict(ckpt["args"])
+    include_stepwise_path_summary = str(ckpt_args.get("teacher_path_summary_mode", "stepwise")) == "stepwise"
+    planner_segment_ks = _segment_ks_from_ckpt_args(ckpt_args)
+    summary_horizon_k = _summary_horizon_k_from_segment_ks(planner_segment_ks)
+    model = MacroDreamerEditModel(
+        max_vacancies=int(ckpt_args["max_vacancies"]),
+        max_defects=int(ckpt_args["max_defects"]),
+        max_shells=int(ckpt_args["max_shells"]),
+        stats_dim=int(ckpt_args["stats_dim"]),
+        lattice_size=tuple(ckpt_args["lattice_size"]),
+        neighbor_order=str(ckpt_args["neighbor_order"]),
+        dim_latent=int(ckpt_args["dim_latent"]),
+        graph_hidden_size=int(ckpt_args["graph_hidden_size"]),
+        patch_hidden_size=int(ckpt_args["patch_hidden_size"]),
+        patch_latent_dim=int(ckpt_args["patch_latent_dim"]),
+        path_latent_dim=int(ckpt_args["path_latent_dim"]),
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(
+            summary_horizon_k,
+            include_stepwise_features=include_stepwise_path_summary,
+        ),
+        max_macro_k=max(summary_horizon_k, 16),
+    ).to(device)
+    missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
+    model.realized_tau_head_loaded = not any(key.startswith("realized_duration_head.") for key in missing)
+    if missing:
+        print(f"Planner-selected collector: missing checkpoint keys initialized from scratch: {missing}", flush=True)
+    if unexpected:
+        print(f"Planner-selected collector: unexpected checkpoint keys ignored: {unexpected}", flush=True)
+    model.eval()
+    return model, ckpt_args
+
+
+def _build_planner_inference_tensors(
+    *,
+    env: MacroKMCEnv,
+    max_seed_vacancies: int,
+    max_candidate_sites: int,
+    horizon_k: int,
+    device: str,
+) -> dict[str, torch.Tensor] | None:
+    candidate_positions, depth_map, seeds = _build_candidate_positions(
+        env,
+        horizon_k,
+        max_seed_vacancies=max_seed_vacancies,
+        max_candidate_sites=max_candidate_sites,
+    )
+    if not candidate_positions:
+        return None
+    start_vacancies = env.env.get_vacancy_array().astype(np.int32)
+    start_cu = env.env.get_cu_array().astype(np.int32)
+    start_vac_set, start_cu_set = _positions_to_type_lookup(start_vacancies, start_cu)
+    positions, nearest_offsets, reach_depth, is_start_vacancy, current_types, _, _ = _build_patch_features(
+        candidate_positions=candidate_positions,
+        depth_map=depth_map,
+        seeds=seeds,
+        start_vac_set=start_vac_set,
+        start_cu_set=start_cu_set,
+        end_vac_set=start_vac_set,
+        end_cu_set=start_cu_set,
+        max_candidate_sites=max_candidate_sites,
+        box=np.asarray(env.env.dims, dtype=np.int32),
+        horizon_k=horizon_k,
+    )
+    candidate_mask = np.zeros((max_candidate_sites,), dtype=np.float32)
+    candidate_mask[: len(candidate_positions)] = 1.0
+    return {
+        "start_obs": torch.tensor(env.obs()[None, :], dtype=torch.float32, device=device),
+        "global_summary": torch.tensor(_global_summary(env)[None, :], dtype=torch.float32, device=device),
+        "candidate_positions": torch.tensor(positions[None, ...], dtype=torch.float32, device=device),
+        "nearest_vacancy_offset": torch.tensor(nearest_offsets[None, ...], dtype=torch.float32, device=device),
+        "reach_depth": torch.tensor(reach_depth[None, ...], dtype=torch.float32, device=device),
+        "is_start_vacancy": torch.tensor(is_start_vacancy[None, ...], dtype=torch.float32, device=device),
+        "current_types": torch.tensor(current_types[None, ...], dtype=torch.long, device=device),
+        "candidate_mask": torch.tensor(candidate_mask[None, ...], dtype=torch.float32, device=device),
+        "box_dims": torch.tensor(np.asarray(env.env.dims, dtype=np.float32)[None, :], dtype=torch.float32, device=device),
+        "horizon_k": torch.tensor([horizon_k], dtype=torch.long, device=device),
+    }
+
+
+def _compute_planner_selection_score(
+    *,
+    pred_reward_sum: float,
+    reward_scale: float,
+    model_expected_tau: float,
+    baseline_expected_tau: float,
+    horizon_k: int,
+    planner_tau_source: str,
+    planner_score_mode: str,
+    planner_tau_residual_penalty: float,
+    planner_k_penalty_power: float,
+    planner_tau_blend_alpha: float = 1.0,
+) -> tuple[float, float]:
+    tau_for_score = _duration_from_source(
+        model_expected_tau=model_expected_tau,
+        baseline_expected_tau=baseline_expected_tau,
+        source=planner_tau_source,
+        blend_alpha=planner_tau_blend_alpha,
+    )
+    delta_e = float(pred_reward_sum) / max(float(reward_scale), 1e-12)
+    if planner_score_mode == "energy":
+        score = delta_e
+    elif planner_score_mode == "energy_per_sqrt_tau":
+        score = delta_e / float(np.sqrt(tau_for_score))
+    else:
+        score = delta_e / tau_for_score
+    if planner_tau_residual_penalty > 0.0:
+        model_tau = max(float(model_expected_tau), 1e-12)
+        baseline_tau = max(float(baseline_expected_tau), 1e-12)
+        residual = abs(float(np.log(model_tau / baseline_tau)))
+        score *= float(np.exp(-float(planner_tau_residual_penalty) * residual))
+    if planner_k_penalty_power > 0.0:
+        score /= max(float(horizon_k), 1.0) ** float(planner_k_penalty_power)
+    return float(score), float(tau_for_score)
+
+
+def _duration_from_source(
+    *,
+    model_expected_tau: float,
+    baseline_expected_tau: float,
+    source: str,
+    blend_alpha: float = 1.0,
+) -> float:
+    model_tau = max(float(model_expected_tau), 1e-12)
+    baseline_tau = max(float(baseline_expected_tau), 1e-12)
+    if source == "model":
+        return model_tau
+    if source == "baseline":
+        return baseline_tau
+    if source == "blend":
+        alpha = float(np.clip(blend_alpha, 0.0, 1.0))
+        return float(np.exp((1.0 - alpha) * np.log(baseline_tau) + alpha * np.log(model_tau)))
+    raise ValueError(f"Unknown duration source: {source}")
+
+
+def _choose_planner_candidate(
+    candidates: list[dict[str, object]],
+    *,
+    min_projected_changed_sites: int,
+) -> dict[str, object] | None:
+    legal = [
+        item
+        for item in candidates
+        if float(item.get("reachability_violation", 1.0)) <= 0.0
+        and float(item.get("projected_changed_count", 0.0)) >= float(min_projected_changed_sites)
+    ]
+    if not legal:
+        return None
+    return max(legal, key=lambda item: float(item.get("selection_score", -float("inf"))))
+
+
+@torch.no_grad()
+def _predict_planner_candidate_for_horizon(
+    *,
+    model: MacroDreamerEditModel,
+    env: MacroKMCEnv,
+    horizon_k: int,
+    max_seed_vacancies: int,
+    max_candidate_sites: int,
+    reward_scale: float,
+    device: str,
+    duration_source: str,
+    planner_tau_source: str,
+    planner_score_mode: str,
+    planner_tau_residual_penalty: float,
+    planner_k_penalty_power: float,
+    reward_prediction_source: str,
+    duration_blend_alpha: float = 1.0,
+    planner_tau_blend_alpha: float = 1.0,
+) -> dict[str, object] | None:
+    tensors = _build_planner_inference_tensors(
+        env=env,
+        max_seed_vacancies=max_seed_vacancies,
+        max_candidate_sites=max_candidate_sites,
+        horizon_k=horizon_k,
+        device=device,
+    )
+    if tensors is None:
+        return None
+    global_latent = model.encode_global(tensors["start_obs"])
+    site_latent, patch_latent = model.encode_patch(
+        positions=tensors["candidate_positions"],
+        nearest_vacancy_offset=tensors["nearest_vacancy_offset"],
+        reach_depth=tensors["reach_depth"],
+        is_start_vacancy=tensors["is_start_vacancy"],
+        type_ids=tensors["current_types"],
+        node_mask=tensors["candidate_mask"],
+        global_summary=tensors["global_summary"],
+        box_dims=tensors["box_dims"],
+    )
+    prior_mu, prior_logvar = model.prior_stats(global_latent, tensors["global_summary"], tensors["horizon_k"])
+    path_latent = model.sample_path_latent(prior_mu, prior_logvar, deterministic=True)
+    next_pred = model.predict_next_global(global_latent, path_latent, tensors["horizon_k"])
+    change_logits, raw_type_logits = model.decode_edit(
+        site_latent=site_latent,
+        patch_latent=patch_latent,
+        predicted_next_global=next_pred,
+        path_latent=path_latent,
+        horizon_k=tensors["horizon_k"],
+        current_types=tensors["current_types"],
+    )
+    projected_types, projected_changed_mask, transport_cost, reachability_violation = project_types_by_inventory(
+        current_types=tensors["current_types"],
+        change_logits=change_logits,
+        type_logits=raw_type_logits,
+        node_mask=tensors["candidate_mask"],
+        positions=tensors["candidate_positions"],
+        box_dims=tensors["box_dims"],
+        horizon_k=tensors["horizon_k"],
+        max_changed_sites=2 * tensors["horizon_k"],
+    )
+    reward_patch_latent = patch_latent
+    reward_change_logits = change_logits
+    reward_type_logits = raw_type_logits
+    if reward_prediction_source == "projected":
+        _, reward_patch_latent = model.encode_patch(
+            positions=tensors["candidate_positions"],
+            nearest_vacancy_offset=tensors["nearest_vacancy_offset"],
+            reach_depth=tensors["reach_depth"],
+            is_start_vacancy=tensors["is_start_vacancy"],
+            type_ids=projected_types,
+            node_mask=tensors["candidate_mask"],
+            global_summary=tensors["global_summary"],
+            box_dims=tensors["box_dims"],
+        )
+        reward_change_logits, reward_type_logits = projected_edit_logits_from_types(
+            current_types=tensors["current_types"],
+            projected_types=projected_types,
+            candidate_mask=tensors["candidate_mask"],
+        )
+    duration_outputs = _predict_reward_and_duration_outputs(
+        model,
+        global_latent,
+        next_pred,
+        path_latent,
+        tensors["global_summary"],
+        tensors["horizon_k"],
+        patch_latent=reward_patch_latent,
+        change_logits=reward_change_logits,
+        type_logits=reward_type_logits,
+        current_types=tensors["current_types"],
+        candidate_mask=tensors["candidate_mask"],
+    )
+    reward_raw = float(duration_outputs["reward"].item())
+    reward_gate_prob = float(torch.sigmoid(duration_outputs["gate_logit"]).item())
+    pred_reward = float((duration_outputs["reward"] * torch.sigmoid(duration_outputs["gate_logit"])).item())
+    model_expected_tau = float(torch.exp(duration_outputs["expected_tau_mu"]).item())
+    model_realized_tau = float(torch.exp(duration_outputs["realized_tau_mu"]).item())
+    baseline_log_tau = macro_duration_baseline_log_tau(tensors["global_summary"], tensors["horizon_k"])
+    baseline_expected_tau = float(torch.exp(baseline_log_tau).item())
+    pred_expected_tau = _duration_from_source(
+        model_expected_tau=model_expected_tau,
+        baseline_expected_tau=baseline_expected_tau,
+        source=duration_source,
+        blend_alpha=duration_blend_alpha,
+    )
+    pred_realized_tau = model_realized_tau
+    if duration_source in {"baseline", "blend"}:
+        pred_realized_tau = pred_expected_tau
+    selection_score, tau_for_score = _compute_planner_selection_score(
+        pred_reward_sum=pred_reward,
+        reward_scale=reward_scale,
+        model_expected_tau=model_expected_tau,
+        baseline_expected_tau=baseline_expected_tau,
+        horizon_k=int(horizon_k),
+        planner_tau_source=planner_tau_source,
+        planner_score_mode=planner_score_mode,
+        planner_tau_residual_penalty=planner_tau_residual_penalty,
+        planner_k_penalty_power=planner_k_penalty_power,
+        planner_tau_blend_alpha=planner_tau_blend_alpha,
+    )
+    violation = float(reachability_violation.item())
+    if violation > 0.0:
+        selection_score = -float("inf")
+    return {
+        "segment_k": int(horizon_k),
+        "predicted_reward_sum": pred_reward,
+        "predicted_delta_e": float(pred_reward / max(float(reward_scale), 1e-12)),
+        "predicted_reward_raw": reward_raw,
+        "predicted_reward_gate_prob": reward_gate_prob,
+        "predicted_expected_tau": float(pred_expected_tau),
+        "predicted_realized_tau": float(pred_realized_tau),
+        "model_expected_tau": float(model_expected_tau),
+        "model_realized_tau": float(model_realized_tau),
+        "baseline_expected_tau": float(baseline_expected_tau),
+        "planner_tau_for_score": float(tau_for_score),
+        "duration_blend_alpha": float(duration_blend_alpha),
+        "planner_tau_blend_alpha": float(planner_tau_blend_alpha),
+        "reachability_violation": violation,
+        "projected_changed_count": float(projected_changed_mask.sum().item()),
+        "transport_cost": float(transport_cost.item()),
+        "selection_score": float(selection_score),
+    }
+
+
+def _collect_planner_selected_segments(
+    *,
+    env: MacroKMCEnv,
+    num_segments: int,
+    segment_ks: list[int],
+    planner_model: MacroDreamerEditModel,
+    planner_device: str,
+    max_seed_vacancies: int,
+    max_candidate_sites: int,
+    rng: np.random.Generator,
+    include_stepwise_path_summary: bool,
+    summary_horizon_k: int,
+    max_segments_per_rollout: int,
+    min_projected_changed_sites: int,
+    duration_source: str,
+    planner_tau_source: str,
+    planner_score_mode: str,
+    planner_tau_residual_penalty: float,
+    planner_k_penalty_power: float,
+    reward_prediction_source: str,
+    duration_blend_alpha: float = 1.0,
+    planner_tau_blend_alpha: float = 1.0,
+    allow_uncovered_reward_only: bool = False,
+    teacher_candidate_augmentation: bool = True,
+    teacher_candidate_neighbor_depth: int = 1,
+    teacher_mode: str = "kmc",
+    neural_teacher: Optional[torch.nn.Module] = None,
+    neural_teacher_device: str = "cpu",
+    neural_teacher_temperature: float = 1.0,
+    neural_teacher_epsilon: float = 0.0,
+    max_attempt_multiplier: int = 30,
+) -> tuple[list[MacroSegmentSample], dict[str, object]]:
+    def restart_env(current_env: MacroKMCEnv) -> tuple[MacroKMCEnv, np.ndarray]:
+        new_env = MacroKMCEnv(copy.deepcopy(current_env.cfg))
+        return new_env, new_env.reset()
+
+    samples: list[MacroSegmentSample] = []
+    samples_by_k: dict[int, int] = {int(k): 0 for k in segment_ks}
+    stats: dict[str, object] = {
+        "attempts": 0,
+        "skipped_no_planner_candidate": 0,
+        "skipped_uncovered": 0,
+        "reward_only_uncovered": 0,
+        "skipped_terminal": 0,
+        "skipped_noop": 0,
+        "candidate_size_sum": 0.0,
+        "planner_projected_changed_count_sum": 0.0,
+        "planner_score_sum": 0.0,
+    }
+    selected_attempts_by_k: dict[int, int] = {int(k): 0 for k in segment_ks}
+    skipped_uncovered_by_k: dict[int, int] = {int(k): 0 for k in segment_ks}
+    reward_only_uncovered_by_k: dict[int, int] = {int(k): 0 for k in segment_ks}
+    progress_every = max(20, min(100, num_segments // 10))
+    obs = env.reset()
+    segments_since_reset = 0
+    stall_attempts = 0
+    max_stall_attempts = 16
+    attempts_limit = num_segments * max_attempt_multiplier
+    while len(samples) < num_segments and int(stats["attempts"]) < attempts_limit:
+        stats["attempts"] = int(stats["attempts"]) + 1
+        start_obs = obs.copy()
+        start_vacancies = env.env.get_vacancy_array().astype(np.int32)
+        start_cu = env.env.get_cu_array().astype(np.int32)
+        start_vac_set, start_cu_set = _positions_to_type_lookup(start_vacancies, start_cu)
+        global_summary = _global_summary(env)
+        candidates: list[dict[str, object]] = []
+        for horizon_k in segment_ks:
+            candidate = _predict_planner_candidate_for_horizon(
+                model=planner_model,
+                env=env,
+                horizon_k=int(horizon_k),
+                max_seed_vacancies=max_seed_vacancies,
+                max_candidate_sites=max_candidate_sites,
+                reward_scale=float(env.cfg.get("reward_scale", 1.0)),
+                device=planner_device,
+                duration_source=duration_source,
+                planner_tau_source=planner_tau_source,
+                planner_score_mode=planner_score_mode,
+                planner_tau_residual_penalty=planner_tau_residual_penalty,
+                planner_k_penalty_power=planner_k_penalty_power,
+                reward_prediction_source=reward_prediction_source,
+                duration_blend_alpha=duration_blend_alpha,
+                planner_tau_blend_alpha=planner_tau_blend_alpha,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+        selected = _choose_planner_candidate(
+            candidates,
+            min_projected_changed_sites=min_projected_changed_sites,
+        )
+        if selected is None:
+            stats["skipped_no_planner_candidate"] = int(stats["skipped_no_planner_candidate"]) + 1
+            env, obs = restart_env(env)
+            segments_since_reset = 0
+            continue
+        horizon_k = int(selected["segment_k"])
+        selected_attempts_by_k[horizon_k] = selected_attempts_by_k.get(horizon_k, 0) + 1
+        candidate_positions, depth_map, seeds = _build_candidate_positions(
+            env,
+            horizon_k,
+            max_seed_vacancies=max_seed_vacancies,
+            max_candidate_sites=max_candidate_sites,
+        )
+        if not candidate_positions:
+            stats["skipped_no_planner_candidate"] = int(stats["skipped_no_planner_candidate"]) + 1
+            env, obs = restart_env(env)
+            segments_since_reset = 0
+            stall_attempts = 0
+            continue
+
+        tau_exp = 0.0
+        tau_real = 0.0
+        reward_sum = 0.0
+        touched_positions: set[tuple[int, int, int]] = set()
+        path_infos: list[dict] = []
+        done = False
+        next_obs = start_obs
+        for _ in range(horizon_k):
+            if teacher_mode == "neural" and neural_teacher is not None:
+                if neural_teacher_epsilon > 0 and rng.random() < neural_teacher_epsilon:
+                    action = _sample_teacher_action(env, rng)
+                else:
+                    action = _sample_neural_teacher_action(
+                        env,
+                        neural_teacher,
+                        neural_teacher_device,
+                        temperature=neural_teacher_temperature,
+                    )
+            else:
+                action = _sample_teacher_action(env, rng)
+            if action is None:
+                done = True
+                break
+            next_obs, reward, done, info = env.step(action)
+            tau_exp += float(info["expected_delta_t"])
+            tau_real += float(info["delta_t"])
+            reward_sum += float(reward)
+            path_infos.append(info)
+            touched_positions.add(tuple(map(int, info["old_pos"].tolist())))
+            touched_positions.add(tuple(map(int, info["new_pos"].tolist())))
+            if done:
+                break
+        if done:
+            stats["skipped_terminal"] = int(stats["skipped_terminal"]) + 1
+            env, obs = restart_env(env)
+            segments_since_reset = 0
+            stall_attempts = 0
+            continue
+
+        if teacher_candidate_augmentation:
+            candidate_positions, depth_map, seeds = _augment_candidate_positions_with_teacher_path(
+                candidate_positions=candidate_positions,
+                depth_map=depth_map,
+                seeds=seeds,
+                touched_positions=touched_positions,
+                box=np.asarray(env.env.dims, dtype=np.int32),
+                nn1=np.asarray(env.env.NN1, dtype=np.int32),
+                horizon_k=horizon_k,
+                max_candidate_sites=max_candidate_sites,
+                teacher_neighbor_depth=teacher_candidate_neighbor_depth,
+            )
+
+        end_vacancies = env.env.get_vacancy_array().astype(np.int32)
+        end_cu = env.env.get_cu_array().astype(np.int32)
+        end_vac_set, end_cu_set = _positions_to_type_lookup(end_vacancies, end_cu)
+        changed_positions = _changed_positions_between(start_vac_set, start_cu_set, end_vac_set, end_cu_set)
+        if not changed_positions:
+            stats["skipped_noop"] = int(stats["skipped_noop"]) + 1
+            env, obs = restart_env(env)
+            segments_since_reset = 0
+            stall_attempts = 0
+            continue
+        candidate_set = set(candidate_positions)
+        reward_only_uncovered = False
+        if not changed_positions.issubset(candidate_set):
+            if allow_uncovered_reward_only:
+                stats["reward_only_uncovered"] = int(stats["reward_only_uncovered"]) + 1
+                reward_only_uncovered_by_k[horizon_k] = reward_only_uncovered_by_k.get(horizon_k, 0) + 1
+                reward_only_uncovered = True
+            else:
+                stats["skipped_uncovered"] = int(stats["skipped_uncovered"]) + 1
+                skipped_uncovered_by_k[horizon_k] = skipped_uncovered_by_k.get(horizon_k, 0) + 1
+                stall_attempts += 1
+                if stall_attempts >= max_stall_attempts:
+                    env, obs = restart_env(env)
+                    segments_since_reset = 0
+                    stall_attempts = 0
+                else:
+                    obs = next_obs
+                continue
+
+        positions, nearest_offsets, reach_depth, is_start_vacancy, current_types, target_types, changed_mask = _build_patch_features(
+            candidate_positions=candidate_positions,
+            depth_map=depth_map,
+            seeds=seeds,
+            start_vac_set=start_vac_set,
+            start_cu_set=start_cu_set,
+            end_vac_set=end_vac_set,
+            end_cu_set=end_cu_set,
+            max_candidate_sites=max_candidate_sites,
+            box=np.asarray(env.env.dims, dtype=np.int32),
+            horizon_k=horizon_k,
+        )
+        if float(changed_mask.sum()) <= 0.0 and not reward_only_uncovered:
+            stats["skipped_noop"] = int(stats["skipped_noop"]) + 1
+            env, obs = restart_env(env)
+            segments_since_reset = 0
+            stall_attempts = 0
+            continue
+
+        teacher_summary = _teacher_path_summary(
+            path_infos,
+            max_candidate_sites=max_candidate_sites,
+            horizon_k=horizon_k,
+            include_stepwise_features=include_stepwise_path_summary,
+            summary_horizon_k=summary_horizon_k,
+        )
+        mask = np.zeros((max_candidate_sites,), dtype=np.float32)
+        mask[: len(candidate_positions)] = 1.0
+        stats["candidate_size_sum"] = float(stats["candidate_size_sum"]) + float(mask.sum())
+        stats["planner_projected_changed_count_sum"] = float(stats["planner_projected_changed_count_sum"]) + float(
+            selected.get("projected_changed_count", 0.0)
+        )
+        stats["planner_score_sum"] = float(stats["planner_score_sum"]) + float(selected.get("selection_score", 0.0))
+        samples_by_k[horizon_k] = samples_by_k.get(horizon_k, 0) + 1
+        samples.append(
+            MacroSegmentSample(
+                start_obs=start_obs,
+                next_obs=next_obs.copy(),
+                start_vacancy_positions=start_vacancies.copy(),
+                start_cu_positions=start_cu.copy(),
+                global_summary=global_summary,
+                teacher_path_summary=teacher_summary,
+                candidate_positions=positions,
+                nearest_vacancy_offset=nearest_offsets,
+                reach_depth=reach_depth,
+                is_start_vacancy=is_start_vacancy,
+                current_types=current_types,
+                target_types=target_types,
+                candidate_mask=mask,
+                changed_mask=changed_mask,
+                tau_exp=float(tau_exp),
+                tau_real=float(tau_real),
+                reward_sum=float(reward_sum),
+                horizon_k=int(horizon_k),
+                box_dims=np.asarray(env.env.dims, dtype=np.float32),
+            )
+        )
+        stall_attempts = 0
+        if len(samples) % progress_every == 0 or len(samples) == num_segments:
+            print(
+                json.dumps(
+                    {
+                        "planner_selected_collect_progress": {
+                            "samples": len(samples),
+                            "target": num_segments,
+                            "attempts": int(stats["attempts"]),
+                            "coverage": float(len(samples) / max(int(stats["attempts"]), 1)),
+                            "chosen_k_histogram": {str(k): int(v) for k, v in sorted(samples_by_k.items())},
+                            "selected_attempt_k_histogram": {str(k): int(v) for k, v in sorted(selected_attempts_by_k.items())},
+                            "reward_only_uncovered": int(stats["reward_only_uncovered"]),
+                            "skipped_uncovered": int(stats["skipped_uncovered"]),
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+        segments_since_reset += 1
+        if max_segments_per_rollout > 0 and segments_since_reset >= max_segments_per_rollout:
+            env, obs = restart_env(env)
+            segments_since_reset = 0
+        else:
+            obs = next_obs
+
+    denom = max(len(samples), 1)
+    stats["samples"] = int(len(samples))
+    stats["coverage"] = float(len(samples) / max(int(stats["attempts"]), 1))
+    stats["avg_candidate_size"] = float(float(stats["candidate_size_sum"]) / denom)
+    stats["avg_planner_projected_changed_count"] = float(float(stats["planner_projected_changed_count_sum"]) / denom)
+    stats["avg_planner_score"] = float(float(stats["planner_score_sum"]) / denom)
+    stats["chosen_k_histogram"] = {str(k): int(samples_by_k.get(k, 0)) for k in sorted(samples_by_k)}
+    stats["selected_attempt_k_histogram"] = {str(k): int(selected_attempts_by_k.get(k, 0)) for k in sorted(selected_attempts_by_k)}
+    stats["skipped_uncovered_by_k"] = {str(k): int(skipped_uncovered_by_k.get(k, 0)) for k in sorted(skipped_uncovered_by_k)}
+    stats["reward_only_uncovered_by_k"] = {str(k): int(reward_only_uncovered_by_k.get(k, 0)) for k in sorted(reward_only_uncovered_by_k)}
+    stats["by_k"] = {
+        str(k): {"samples": int(samples_by_k.get(k, 0)), "sample_frac": float(samples_by_k.get(k, 0) / denom)}
+        for k in sorted(samples_by_k)
+    }
     return samples, stats
 
 
@@ -978,6 +1738,10 @@ def _reward_supervision_losses(
     target_reward: torch.Tensor,
     *,
     reward_magnitude_weight: float,
+    reward_gated_weight: float = 1.0,
+    reward_gate_weight: float = 0.25,
+    reward_zero_weight: float = 0.5,
+    reward_sign_weight: float = 0.25,
 ) -> dict[str, torch.Tensor]:
     reward_nonzero_target = (target_reward.abs() > 1e-6).float()
     gated_reward = reward_hat * torch.sigmoid(gate_logit)
@@ -997,11 +1761,11 @@ def _reward_supervision_losses(
     else:
         reward_zero_loss = torch.zeros((), device=reward_hat.device)
     loss = (
-        reward_gated_loss
-        + 0.25 * gate_loss
+        float(reward_gated_weight) * reward_gated_loss
+        + float(reward_gate_weight) * gate_loss
         + 0.5 * reward_magnitude_weight * reward_magnitude_loss
-        + 0.5 * reward_zero_loss
-        + 0.25 * reward_sign_loss
+        + float(reward_zero_weight) * reward_zero_loss
+        + float(reward_sign_weight) * reward_sign_loss
     )
     return {
         "loss": loss,
@@ -1234,10 +1998,11 @@ def _projected_state_alignment_loss(
 
 
 def _validate_resume_args(args: argparse.Namespace, ckpt_args: dict[str, object]) -> None:
-    resume_segment_k = ckpt_args.get("segment_k")
-    if resume_segment_k is not None and int(resume_segment_k) != int(args.segment_k):
+    resume_segment_ks = _segment_ks_from_ckpt_args(ckpt_args)
+    current_segment_ks = _segment_ks_from_args(args)
+    if resume_segment_ks != current_segment_ks:
         raise ValueError(
-            f"Resume checkpoint segment_k={int(resume_segment_k)} does not match current segment_k={int(args.segment_k)}"
+            f"Resume checkpoint segment_ks={resume_segment_ks} does not match current segment_ks={current_segment_ks}"
         )
     resume_summary_mode = ckpt_args.get("teacher_path_summary_mode")
     if resume_summary_mode is not None and str(resume_summary_mode) != str(args.teacher_path_summary_mode):
@@ -1245,6 +2010,41 @@ def _validate_resume_args(args: argparse.Namespace, ckpt_args: dict[str, object]
             "Resume checkpoint teacher_path_summary_mode="
             f"{resume_summary_mode} does not match current teacher_path_summary_mode={args.teacher_path_summary_mode}"
         )
+
+
+def _resize_tensor_prefix(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    resized = torch.zeros_like(target)
+    slices = tuple(slice(0, min(source.shape[dim], target.shape[dim])) for dim in range(source.ndim))
+    resized[slices] = source[slices].to(dtype=target.dtype, device=target.device)
+    return resized
+
+
+def _load_model_weights(
+    model: nn.Module,
+    state_dict: dict[str, torch.Tensor],
+    *,
+    allow_path_posterior_resize: bool = False,
+) -> tuple[list[str], list[str], list[str], list[str]]:
+    model_state = model.state_dict()
+    load_state: dict[str, torch.Tensor] = {}
+    unexpected: list[str] = []
+    resized: list[str] = []
+    skipped: list[str] = []
+    for key, value in state_dict.items():
+        if key not in model_state:
+            unexpected.append(key)
+            continue
+        target = model_state[key]
+        if tuple(value.shape) == tuple(target.shape):
+            load_state[key] = value
+        elif allow_path_posterior_resize and key.startswith("path_posterior."):
+            load_state[key] = _resize_tensor_prefix(value, target)
+            resized.append(key)
+        else:
+            skipped.append(key)
+    missing, extra_unexpected = model.load_state_dict(load_state, strict=False)
+    unexpected.extend(extra_unexpected)
+    return list(missing), unexpected, resized, skipped
 
 
 def _initialize_best_score_from_saved_best(
@@ -1257,6 +2057,7 @@ def _initialize_best_score_from_saved_best(
     checkpoint_best_score: Optional[float] = None,
     allow_checkpoint_best_score_fallback: bool = True,
     proj_l1_score_weight: float = 80.0,
+    reward_prediction_source: str = "raw",
 ) -> tuple[float, str]:
     current_state = copy.deepcopy(model.state_dict())
     source = "resume checkpoint"
@@ -1268,7 +2069,13 @@ def _initialize_best_score_from_saved_best(
             source = "saved best model"
         except RuntimeError:
             source = "resume checkpoint (skipped incompatible saved best model)"
-    best_metrics = _evaluate(model, loader, device, max_changed_sites)
+    best_metrics = _evaluate(
+        model,
+        loader,
+        device,
+        max_changed_sites,
+        reward_prediction_source=reward_prediction_source,
+    )
     best_score = _selection_score(best_metrics, dataset_stats, proj_l1_score_weight=proj_l1_score_weight)
     model.load_state_dict(current_state)
     if source.startswith("resume checkpoint") and checkpoint_best_score is not None and allow_checkpoint_best_score_fallback:
@@ -1277,7 +2084,13 @@ def _initialize_best_score_from_saved_best(
     return best_score, source
 
 
-def _evaluate(model: MacroDreamerEditModel, loader: DataLoader, device: str, max_changed_sites: int) -> dict[str, float]:
+def _evaluate(
+    model: MacroDreamerEditModel,
+    loader: DataLoader,
+    device: str,
+    max_changed_sites: int,
+    reward_prediction_source: str = "raw",
+) -> dict[str, float]:
     model.eval()
     reward_pred = []
     reward_true = []
@@ -1349,9 +2162,6 @@ def _evaluate(model: MacroDreamerEditModel, loader: DataLoader, device: str, max
             realized_tau_log_sigma = duration_outputs["realized_tau_log_sigma"]
             gate_logit = duration_outputs["gate_logit"]
             realized_tau_available = realized_tau_available and bool(duration_outputs.get("realized_tau_available", True))
-            gated_reward = reward_hat * torch.sigmoid(gate_logit)
-            reward_pred.extend(gated_reward.cpu().numpy().tolist())
-            reward_true.extend(tensors["reward_sum"].cpu().numpy().tolist())
             tau_pred.extend(torch.exp(tau_mu).cpu().numpy().tolist())
             tau_true.extend(tensors["tau_exp"].cpu().numpy().tolist())
             realized_tau_mu_pred.extend(realized_tau_mu.cpu().numpy().tolist())
@@ -1411,9 +2221,43 @@ def _evaluate(model: MacroDreamerEditModel, loader: DataLoader, device: str, max
                 positions=tensors["candidate_positions"],
                 box_dims=tensors["box_dims"],
                 horizon_k=tensors["horizon_k"],
-                max_changed_sites=max_changed_sites,
+                max_changed_sites=2 * tensors["horizon_k"],
             )
             projected_changed_mask = ((projected_types != tensors["current_types"]).float() * tensors["candidate_mask"])
+            if reward_prediction_source == "projected":
+                _, projected_patch_latent_for_reward = model.encode_patch(
+                    positions=tensors["candidate_positions"],
+                    nearest_vacancy_offset=tensors["nearest_vacancy_offset"],
+                    reach_depth=tensors["reach_depth"],
+                    is_start_vacancy=tensors["is_start_vacancy"],
+                    type_ids=projected_types,
+                    node_mask=tensors["candidate_mask"],
+                    global_summary=tensors["global_summary"],
+                    box_dims=tensors["box_dims"],
+                )
+                projected_change_logits, projected_type_logits = projected_edit_logits_from_types(
+                    current_types=tensors["current_types"],
+                    projected_types=projected_types,
+                    candidate_mask=tensors["candidate_mask"],
+                )
+                projected_duration_outputs = _predict_reward_and_duration_outputs(
+                    model,
+                    global_latent,
+                    next_pred,
+                    path_latent,
+                    tensors["global_summary"],
+                    tensors["horizon_k"],
+                    patch_latent=projected_patch_latent_for_reward,
+                    change_logits=projected_change_logits,
+                    type_logits=projected_type_logits,
+                    current_types=tensors["current_types"],
+                    candidate_mask=tensors["candidate_mask"],
+                )
+                reward_hat = projected_duration_outputs["reward"]
+                gate_logit = projected_duration_outputs["gate_logit"]
+            gated_reward = reward_hat * torch.sigmoid(gate_logit)
+            reward_pred.extend(gated_reward.cpu().numpy().tolist())
+            reward_true.extend(tensors["reward_sum"].cpu().numpy().tolist())
             proj_changed_acc = (projected_types[changed_valid] == tensors["target_types"][changed_valid]).float().mean().item() if changed_valid.any() else 1.0
             projected_changed_type_acc_scores.append(proj_changed_acc)
             reachability_violations.extend(proj_violation.cpu().numpy().tolist())
@@ -1542,6 +2386,11 @@ def _train_epoch(
     count_loss_weight: float = 0.1,
     detach_proj_encoder: bool = False,
     reward_magnitude_weight: float = 1.0,
+    reward_gated_weight: float = 1.0,
+    reward_gate_weight: float = 0.25,
+    reward_zero_weight: float = 0.5,
+    reward_sign_weight: float = 0.25,
+    reward_prediction_source: str = "raw",
 ) -> dict[str, float]:
     model.train()
     aux_scale = _scheduled_aux_scale(epoch, total_epochs) if aux_anneal else 1.0
@@ -1555,6 +2404,7 @@ def _train_epoch(
         "atom_to_vac_type": 0.0,
         "vac_to_atom_type": 0.0,
         "tau": 0.0,
+        "tau_log_mu": 0.0,
         "tau_post": 0.0,
         "tau_prior": 0.0,
         "realized_tau": 0.0,
@@ -1667,7 +2517,7 @@ def _train_epoch(
                 positions=tensors["candidate_positions"],
                 box_dims=tensors["box_dims"],
                 horizon_k=tensors["horizon_k"],
-                max_changed_sites=max_changed_sites,
+                max_changed_sites=2 * tensors["horizon_k"],
             )
             projected_changed_mask = ((projected_types != tensors["current_types"]).float() * tensors["candidate_mask"]).detach()
             _, projected_patch_latent = model.encode_patch(
@@ -1689,7 +2539,7 @@ def _train_epoch(
                 positions=tensors["candidate_positions"],
                 box_dims=tensors["box_dims"],
                 horizon_k=tensors["horizon_k"],
-                max_changed_sites=max_changed_sites,
+                max_changed_sites=2 * tensors["horizon_k"],
             )
             projected_changed_mask_prior = ((projected_types_prior != tensors["current_types"]).float() * tensors["candidate_mask"]).detach()
             _, projected_patch_latent_prior = model.encode_patch(
@@ -1758,11 +2608,60 @@ def _train_epoch(
         prior_edit_loss = prior_edit["mask"] + 0.1 * prior_edit["count"] + (0.5 * prior_proj_mask_loss if compute_proj else 0.0) + prior_edit["type"]
 
         tau_loss = lognormal_nll(tensors["tau_exp"], tau_mu, tau_log_sigma).mean()
+        tau_log_target = torch.log(tensors["tau_exp"].clamp(min=1e-12))
+        tau_log_mu_loss = F.l1_loss(tau_mu, tau_log_target)
+        if reward_prediction_source == "projected" and compute_proj:
+            projected_change_logits, projected_type_logits = projected_edit_logits_from_types(
+                current_types=tensors["current_types"],
+                projected_types=projected_types.detach(),
+                candidate_mask=tensors["candidate_mask"],
+            )
+            projected_duration_outputs = _predict_reward_and_duration_outputs(
+                model,
+                global_latent,
+                next_pred,
+                post_c,
+                tensors["global_summary"],
+                tensors["horizon_k"],
+                detach_duration_inputs=True,
+                patch_latent=projected_patch_latent.detach() if detach_proj_encoder else projected_patch_latent,
+                change_logits=projected_change_logits,
+                type_logits=projected_type_logits,
+                current_types=tensors["current_types"],
+                candidate_mask=tensors["candidate_mask"],
+            )
+            reward_hat = projected_duration_outputs["reward"]
+            gate_logit = projected_duration_outputs["gate_logit"]
+            projected_change_logits_prior, projected_type_logits_prior = projected_edit_logits_from_types(
+                current_types=tensors["current_types"],
+                projected_types=projected_types_prior.detach(),
+                candidate_mask=tensors["candidate_mask"],
+            )
+            projected_prior_duration_outputs = _predict_reward_and_duration_outputs(
+                model,
+                global_latent,
+                next_pred_prior,
+                prior_c,
+                tensors["global_summary"],
+                tensors["horizon_k"],
+                detach_duration_inputs=True,
+                patch_latent=projected_patch_latent_prior.detach() if detach_proj_encoder else projected_patch_latent_prior,
+                change_logits=projected_change_logits_prior,
+                type_logits=projected_type_logits_prior,
+                current_types=tensors["current_types"],
+                candidate_mask=tensors["candidate_mask"],
+            )
+            reward_hat_prior = projected_prior_duration_outputs["reward"]
+            gate_logit_prior = projected_prior_duration_outputs["gate_logit"]
         reward_terms = _reward_supervision_losses(
             reward_hat,
             gate_logit,
             tensors["reward_sum"],
             reward_magnitude_weight=reward_magnitude_weight,
+            reward_gated_weight=reward_gated_weight,
+            reward_gate_weight=reward_gate_weight,
+            reward_zero_weight=reward_zero_weight,
+            reward_sign_weight=reward_sign_weight,
         )
         reward_loss = reward_terms["loss"]
         latent_loss = F.smooth_l1_loss(next_pred, next_global)
@@ -1791,6 +2690,7 @@ def _train_epoch(
         prior_latent_loss = F.smooth_l1_loss(next_pred_prior, next_global) + 0.5 * prior_proj_state_loss
         path_loss = kl_divergence_diag_gaussian(post_mu, post_logvar, prior_mu, prior_logvar).mean()
         prior_tau_loss = lognormal_nll(tensors["tau_exp"], tau_mu_prior, tau_log_sigma_prior).mean()
+        prior_tau_log_mu_loss = F.l1_loss(tau_mu_prior, tau_log_target)
         realized_tau_loss = lognormal_nll(tensors["tau_real"], realized_tau_mu, realized_tau_log_sigma).mean()
         prior_realized_tau_loss = lognormal_nll(tensors["tau_real"], realized_tau_mu_prior, realized_tau_log_sigma_prior).mean()
         prior_reward_terms = _reward_supervision_losses(
@@ -1798,14 +2698,20 @@ def _train_epoch(
             gate_logit_prior,
             tensors["reward_sum"],
             reward_magnitude_weight=reward_magnitude_weight,
+            reward_gated_weight=reward_gated_weight,
+            reward_gate_weight=reward_gate_weight,
+            reward_zero_weight=reward_zero_weight,
+            reward_sign_weight=reward_sign_weight,
         )
         prior_reward_loss = prior_reward_terms["loss"]
         if tau_supervision_mode == "posterior_only":
             combined_tau_loss = tau_loss
+            combined_tau_log_mu_loss = tau_log_mu_loss
             combined_realized_tau_loss = realized_tau_loss
             effective_tau_post_scale = 1.0
         else:
             combined_tau_loss = prior_tau_loss
+            combined_tau_log_mu_loss = prior_tau_log_mu_loss
             combined_realized_tau_loss = prior_realized_tau_loss
             effective_tau_post_scale = 0.0
 
@@ -1824,11 +2730,16 @@ def _train_epoch(
             + prior_reward_weight * prior_reward_loss
         )
         realized_tau_weight = float(weights.get("realized_tau", 0.0))
-        time_total_loss = weights["tau"] * combined_tau_loss + realized_tau_weight * combined_realized_tau_loss
+        tau_log_mu_weight = float(weights.get("tau_log_mu", 0.0))
+        time_total_loss = (
+            weights["tau"] * combined_tau_loss
+            + tau_log_mu_weight * combined_tau_log_mu_loss
+            + realized_tau_weight * combined_realized_tau_loss
+        )
         loss = main_loss + time_total_loss
         optimizer.zero_grad()
-        main_loss.backward()
-        time_total_loss.backward()
+        if loss.requires_grad:
+            loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
         optimizer.step()
 
@@ -1843,6 +2754,7 @@ def _train_epoch(
         logs["atom_to_vac_type"] += float(atom_to_vac_type_loss.item()) * batch_size
         logs["vac_to_atom_type"] += float(vac_to_atom_type_loss.item()) * batch_size
         logs["tau"] += float(combined_tau_loss.item()) * batch_size
+        logs["tau_log_mu"] += float(combined_tau_log_mu_loss.item()) * batch_size
         logs["tau_post"] += float(tau_loss.item()) * batch_size
         logs["tau_prior"] += float(prior_tau_loss.item()) * batch_size
         logs["realized_tau"] += float(combined_realized_tau_loss.item()) * batch_size
@@ -1929,6 +2841,114 @@ def _initialize_output_heads(model: MacroDreamerEditModel, train_samples: list[M
     _initialize_reward_heads(model, train_samples)
 
 
+def _apply_output_head_initialization_policy(
+    model: MacroDreamerEditModel,
+    train_samples: list[MacroSegmentSample],
+    *,
+    resume: Optional[str],
+    init_from: Optional[str],
+    reinit_output_heads: bool,
+    reinit_reward_heads: bool,
+    freeze_duration_heads: bool,
+) -> None:
+    should_initialize_output_heads = (not resume) and (init_from is None or reinit_output_heads)
+    if should_initialize_output_heads:
+        _initialize_output_heads(model, train_samples)
+    elif (not resume) and reinit_reward_heads:
+        _initialize_reward_heads(model, train_samples)
+    elif init_from is not None and not resume:
+        print("  Output heads preserved from --init_from checkpoint", flush=True)
+    if freeze_duration_heads:
+        for module in (
+            model.duration_head,
+            model.realized_duration_head,
+            model.duration_context_head,
+            model.realized_duration_context_head,
+        ):
+            for param in module.parameters():
+                param.requires_grad_(False)
+        print("  Duration heads frozen", flush=True)
+
+
+def _apply_reward_heads_only_training(model: MacroDreamerEditModel) -> None:
+    reward_prefixes = (
+        "reward_head.",
+        "reward_context_head.",
+        "reward_gate_head.",
+        "reward_gate_context_head.",
+    )
+    trainable = 0
+    total = 0
+    for name, param in model.named_parameters():
+        total += param.numel()
+        is_reward_param = name.startswith(reward_prefixes)
+        param.requires_grad_(is_reward_param)
+        if is_reward_param:
+            trainable += param.numel()
+    print(f"  Reward-head-only training: trainable_params={trainable} / {total}", flush=True)
+
+
+def _apply_reward_duration_heads_only_training(model: MacroDreamerEditModel) -> None:
+    trainable_prefixes = (
+        "reward_head.",
+        "reward_context_head.",
+        "reward_gate_head.",
+        "reward_gate_context_head.",
+        "duration_head.",
+        "realized_duration_head.",
+        "duration_context_head.",
+        "realized_duration_context_head.",
+    )
+    trainable = 0
+    total = 0
+    for name, param in model.named_parameters():
+        total += param.numel()
+        should_train = name.startswith(trainable_prefixes)
+        param.requires_grad_(should_train)
+        if should_train:
+            trainable += param.numel()
+    print(f"  Reward-duration-head-only training: trainable_params={trainable} / {total}", flush=True)
+
+
+def _apply_duration_heads_only_training(model: MacroDreamerEditModel) -> None:
+    trainable_prefixes = (
+        "duration_head.",
+        "realized_duration_head.",
+        "duration_context_head.",
+        "realized_duration_context_head.",
+    )
+    trainable = 0
+    total = 0
+    for name, param in model.named_parameters():
+        total += param.numel()
+        should_train = name.startswith(trainable_prefixes)
+        param.requires_grad_(should_train)
+        if should_train:
+            trainable += param.numel()
+    print(f"  Duration-head-only training: trainable_params={trainable} / {total}", flush=True)
+
+
+def _apply_duration_prior_path_training(model: MacroDreamerEditModel) -> None:
+    trainable_prefixes = (
+        "k_embed.",
+        "path_prior.",
+        "macro_dynamics.",
+        "duration_head.",
+        "realized_duration_head.",
+        "duration_context_head.",
+        "realized_duration_context_head.",
+    )
+    trainable = 0
+    total = 0
+    for name, param in model.named_parameters():
+        total += param.numel()
+        should_train = name.startswith(trainable_prefixes)
+        param.requires_grad_(should_train)
+        if should_train:
+            trainable += param.numel()
+    print(f"  Duration-prior-path training: trainable_params={trainable} / {total}", flush=True)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Dreamer fixed-k macro edit training")
     parser.add_argument("--seed", type=int, default=0)
@@ -1936,6 +2956,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save_dir", type=str, default="results/dreamer_macro_edit_v1")
     parser.add_argument("--dataset_cache", type=str, default="results/dreamer_macro_edit_v1/segments.pt")
     parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--init_from", type=str, default=None,
+                        help="Load compatible model weights from a checkpoint without optimizer/epoch state. "
+                             "Path-posterior tensors are prefix-resized for multi-k summary padding.")
+    parser.add_argument("--reinit_output_heads", action="store_true",
+                        help="When used with --init_from, reinitialize edit/reward/duration output heads from the new dataset. "
+                             "By default, --init_from preserves compatible output heads for true weights-only warm start.")
+    parser.add_argument("--reinit_reward_heads", action="store_true",
+                        help="When used with --init_from, reinitialize only reward/gate heads from the new dataset, "
+                             "preserving edit and duration heads.")
     parser.add_argument("--eval_only", action="store_true")
     parser.add_argument("--lattice_size", type=int, nargs=3, default=[40, 40, 40])
     parser.add_argument("--cu_density", type=float, default=0.0134)
@@ -1949,8 +2978,42 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_shells", type=int, default=16)
     parser.add_argument("--stats_dim", type=int, default=10)
     parser.add_argument("--segment_k", type=int, default=4)
+    parser.add_argument("--segment_ks", type=int, nargs="+", default=None,
+                        help="Optional multi-k horizons, e.g. --segment_ks 2 4 8. "
+                             "When omitted, the legacy single --segment_k mode is used.")
     parser.add_argument("--train_segments", type=int, default=2000)
     parser.add_argument("--val_segments", type=int, default=400)
+    parser.add_argument("--train_segments_per_k", type=int, default=None,
+                        help="Number of training segments to collect for each horizon in --segment_ks.")
+    parser.add_argument("--val_segments_per_k", type=int, default=None,
+                        help="Number of validation segments to collect for each horizon in --segment_ks.")
+    parser.add_argument("--planner_selected_from", type=str, default=None,
+                        help="Collect the segment cache from states where this checkpoint's multi-k planner chooses the horizon. "
+                             "The teacher still rolls out the selected k for supervision.")
+    parser.add_argument("--planner_selected_min_projected_changed_sites", type=int, default=2,
+                        help="Reject planner-selected data candidates whose projected edit changes fewer sites than this value.")
+    parser.add_argument("--planner_selected_duration_source", type=str, default="model", choices=["model", "baseline", "blend"],
+                        help="Duration estimate used by the collector checkpoint for reported predicted tau.")
+    parser.add_argument("--planner_selected_duration_blend_alpha", type=float, default=1.0,
+                        help="For --planner_selected_duration_source blend, alpha in log_tau = (1-alpha)*baseline + alpha*model.")
+    parser.add_argument("--planner_selected_tau_source", type=str, default=None, choices=["model", "baseline", "blend"],
+                        help="Duration estimate used only for planner-selected data scoring. Defaults to --planner_selected_duration_source.")
+    parser.add_argument("--planner_selected_tau_blend_alpha", type=float, default=None,
+                        help="For --planner_selected_tau_source blend, alpha in log_tau. Defaults to --planner_selected_duration_blend_alpha.")
+    parser.add_argument("--planner_selected_score_mode", type=str, default="energy_per_tau",
+                        choices=["energy_per_tau", "energy_per_sqrt_tau", "energy"],
+                        help="Score mode used when choosing k during planner-selected data collection.")
+    parser.add_argument("--planner_selected_reward_prediction_source", type=str, default=None, choices=["raw", "projected"],
+                        help="Reward source used by the collector checkpoint when choosing planner-selected horizons. "
+                             "Defaults to the collector checkpoint's saved reward_prediction_source.")
+    parser.add_argument("--planner_selected_tau_residual_penalty", type=float, default=0.0,
+                        help="Collector score penalty exp(-w * |log(model_tau / baseline_tau)|).")
+    parser.add_argument("--planner_selected_k_penalty_power", type=float, default=0.0,
+                        help="Collector score penalty score /= k ** power.")
+    parser.add_argument("--planner_selected_allow_uncovered_reward_only", action="store_true",
+                        help="For planner-selected calibration, keep samples whose teacher endpoint changes fall outside "
+                             "the candidate set and use them only for reward/tau head calibration. This is intended for "
+                             "--train_reward_duration_heads_only runs; edit targets remain candidate-local.")
     parser.add_argument("--max_seed_vacancies", type=int, default=8)
     parser.add_argument("--max_candidate_sites", type=int, default=128)
     parser.add_argument("--dim_latent", type=int, default=16)
@@ -1960,6 +3023,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--path_latent_dim", type=int, default=32)
     parser.add_argument("--teacher_path_summary_mode", type=str, default="stepwise", choices=["stepwise", "legacy"])
     parser.add_argument("--tau_supervision_mode", type=str, default="prior_main", choices=["prior_main", "posterior_only"])
+    parser.add_argument("--tau_weight", type=float, default=1.0,
+                        help="Training loss weight for tau_exp duration supervision (default: 1.0).")
+    parser.add_argument("--tau_log_mu_weight", type=float, default=0.0,
+                        help="Optional direct L1 weight on expected_duration_mu vs log(tau_exp). "
+                             "Use this when NLL improves sigma without improving tau_log_mae.")
+    parser.add_argument("--freeze_duration_heads", action="store_true",
+                        help="Freeze expected/realized duration heads after checkpoint loading or output-head initialization.")
+    parser.add_argument("--train_reward_heads_only", action="store_true",
+                        help="Freeze all parameters except reward/gate heads after checkpoint loading and optional head reinitialization.")
+    parser.add_argument("--train_reward_duration_heads_only", action="store_true",
+                        help="Freeze all parameters except reward/gate and expected/realized duration heads. "
+                             "Use for planner-selected calibration runs.")
+    parser.add_argument("--train_duration_heads_only", action="store_true",
+                        help="Freeze all parameters except expected/realized duration heads for time-only calibration.")
+    parser.add_argument("--train_duration_prior_path_only", action="store_true",
+                        help="Freeze encoders/edit/reward heads but train k embedding, path prior, macro dynamics, "
+                             "and duration heads for prior-side duration calibration.")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=3e-4)
@@ -1981,9 +3061,25 @@ def parse_args() -> argparse.Namespace:
                         help="Training loss weight for reward prediction (default: 0.5). Higher values strengthen energy/reward prediction.")
     parser.add_argument("--prior_reward_weight", type=float, default=0.5,
                         help="Training loss weight for prior-side reward prediction (default: 0.5). Higher values reduce posterior/prior reward mismatch at inference.")
+    parser.add_argument("--prior_edit_weight", type=float, default=0.25,
+                        help="Training loss weight for prior-side sparse edit prediction (default: 0.25).")
+    parser.add_argument("--prior_latent_weight", type=float, default=0.25,
+                        help="Training loss weight for prior-side latent/projection prediction (default: 0.25).")
+    parser.add_argument("--path_weight", type=float, default=0.05,
+                        help="Training loss weight for posterior-prior path KL (default: 0.05).")
     parser.add_argument("--reward_magnitude_weight", type=float, default=1.0,
                         help="Extra multiplier for reward magnitude loss relative to gate loss (default: 1.0). "
                              "Higher values prioritise predicting correct dE amplitude over zero/nonzero classification.")
+    parser.add_argument("--reward_gated_weight", type=float, default=1.0,
+                        help="Internal weight for the gated reward regression term inside reward supervision.")
+    parser.add_argument("--reward_gate_weight", type=float, default=0.25,
+                        help="Internal weight for reward zero/nonzero gate BCE. Increase when zero-reward samples are overpredicted.")
+    parser.add_argument("--reward_zero_weight", type=float, default=0.5,
+                        help="Internal weight for raw reward regression on zero-reward samples.")
+    parser.add_argument("--reward_sign_weight", type=float, default=0.25,
+                        help="Internal weight for nonzero reward sign classification.")
+    parser.add_argument("--reward_prediction_source", type=str, default="raw", choices=["raw", "projected"],
+                        help="Reward/gate context source. 'projected' trains and evaluates reward on the projection-closed macro edit.")
     parser.add_argument("--reward_branch_version", type=int, default=2,
                         help="Version tag for reward/gate architecture and initialization. Changing it forces reward-head recalibration on resume.")
     parser.add_argument("--realized_tau_weight", type=float, default=0.25,
@@ -2006,17 +3102,31 @@ def parse_args() -> argparse.Namespace:
                         help="Maximum number of accepted macro segments to draw from one teacher rollout before rebuilding the env. Use larger values for more natural long trajectories; 0 disables forced resets.")
     parser.add_argument("--teacher_candidate_neighbor_depth", type=int, default=1,
                         help="During training-data construction, expand the candidate set around teacher-touched sites by this many 1-hop shells.")
+    parser.add_argument("--disable_teacher_candidate_augmentation", action="store_true",
+                        help="Do not inject future teacher-touched sites into candidate support; use for prior-only planner train/eval parity.")
     return parser.parse_args()
 
 
 def _dataset_signature(args: argparse.Namespace) -> dict[str, object]:
-    return {
-        "dataset_version": 8,
+    segment_ks = _segment_ks_from_args(args)
+    train_segments_per_k = _split_segments_per_k(args, "train", segment_ks)
+    val_segments_per_k = _split_segments_per_k(args, "val", segment_ks)
+    planner_selected_from = getattr(args, "planner_selected_from", None)
+    planner_tau_source = getattr(args, "planner_selected_tau_source", None) or getattr(
+        args,
+        "planner_selected_duration_source",
+        "model",
+    )
+    signature = {
+        "dataset_version": 11,
+        "dataset_mode": "planner_selected" if planner_selected_from else "teacher_marginal",
         "seed": int(args.seed),
         "lattice_size": list(args.lattice_size),
         "cu_density": float(args.cu_density),
         "v_density": float(args.v_density),
-        "segment_k": int(args.segment_k),
+        "segment_k": int(segment_ks[0]) if len(segment_ks) == 1 else int(max(segment_ks)),
+        "segment_ks": segment_ks,
+        "summary_horizon_k": int(_summary_horizon_k_from_segment_ks(segment_ks)),
         "max_seed_vacancies": int(args.max_seed_vacancies),
         "max_candidate_sites": int(args.max_candidate_sites),
         "max_episode_steps": int(args.max_episode_steps),
@@ -2027,22 +3137,96 @@ def _dataset_signature(args: argparse.Namespace) -> dict[str, object]:
         "reward_scale": float(args.reward_scale),
         "temperature": float(args.temperature),
         "stats_dim": int(args.stats_dim),
-        "train_segments": int(args.train_segments),
-        "val_segments": int(args.val_segments),
+        "train_segments": int(_split_total_segments(args, "train", segment_ks)),
+        "val_segments": int(_split_total_segments(args, "val", segment_ks)),
+        "train_segments_per_k": int(train_segments_per_k),
+        "val_segments_per_k": int(val_segments_per_k),
+        "planner_selected_from": str(planner_selected_from) if planner_selected_from else None,
+        "planner_selected_checkpoint": _path_fingerprint(planner_selected_from),
+        "planner_selected_min_projected_changed_sites": int(
+            getattr(args, "planner_selected_min_projected_changed_sites", 2)
+        ),
+        "planner_selected_duration_source": str(getattr(args, "planner_selected_duration_source", "model")),
+        "planner_selected_tau_source": str(planner_tau_source),
+        "planner_selected_score_mode": str(getattr(args, "planner_selected_score_mode", "energy_per_tau")),
+        "planner_selected_reward_prediction_source": (
+            str(args.planner_selected_reward_prediction_source)
+            if getattr(args, "planner_selected_reward_prediction_source", None)
+            else None
+        ),
+        "planner_selected_tau_residual_penalty": float(getattr(args, "planner_selected_tau_residual_penalty", 0.0)),
+        "planner_selected_k_penalty_power": float(getattr(args, "planner_selected_k_penalty_power", 0.0)),
+        "planner_selected_allow_uncovered_reward_only": bool(
+            getattr(args, "planner_selected_allow_uncovered_reward_only", False)
+        ),
         "teacher_path_summary_mode": str(args.teacher_path_summary_mode),
         "teacher_mode": str(getattr(args, "teacher_mode", "kmc")),
         "neural_teacher_temperature": float(getattr(args, "neural_teacher_temperature", 1.0)),
         "neural_teacher_epsilon": float(getattr(args, "neural_teacher_epsilon", 0.0)),
         "max_segments_per_rollout": int(getattr(args, "max_segments_per_rollout", 50)),
         "teacher_candidate_neighbor_depth": int(getattr(args, "teacher_candidate_neighbor_depth", 1)),
+        "teacher_candidate_augmentation": not bool(getattr(args, "disable_teacher_candidate_augmentation", False)),
     }
+    if str(getattr(args, "planner_selected_duration_source", "model")) == "blend":
+        signature["planner_selected_duration_blend_alpha"] = float(
+            getattr(args, "planner_selected_duration_blend_alpha", 1.0)
+        )
+    if str(planner_tau_source) == "blend":
+        tau_blend_alpha = getattr(args, "planner_selected_tau_blend_alpha", None)
+        if tau_blend_alpha is None:
+            tau_blend_alpha = getattr(args, "planner_selected_duration_blend_alpha", 1.0)
+        signature["planner_selected_tau_blend_alpha"] = float(tau_blend_alpha)
+    return signature
 
 
 def main() -> None:
     args = parse_args()
+    if args.resume and args.init_from:
+        raise ValueError("--resume and --init_from are mutually exclusive: use --resume for homogeneous continuation or --init_from for weights-only migration")
+    head_only_flags = [
+        bool(args.train_reward_heads_only),
+        bool(args.train_reward_duration_heads_only),
+        bool(args.train_duration_heads_only),
+        bool(args.train_duration_prior_path_only),
+    ]
+    if sum(head_only_flags) > 1:
+        raise ValueError(
+            "--train_reward_heads_only, --train_reward_duration_heads_only, "
+            "--train_duration_heads_only, and --train_duration_prior_path_only are mutually exclusive"
+        )
+    if args.freeze_duration_heads and (
+        args.train_reward_duration_heads_only
+        or args.train_duration_heads_only
+        or args.train_duration_prior_path_only
+    ):
+        raise ValueError("--freeze_duration_heads conflicts with duration-head calibration modes")
+    if args.planner_selected_allow_uncovered_reward_only and not (
+        args.train_reward_duration_heads_only
+        or args.train_duration_heads_only
+        or args.train_duration_prior_path_only
+    ):
+        raise ValueError(
+            "--planner_selected_allow_uncovered_reward_only is only supported with "
+            "duration/reward-duration head-only calibration, because uncovered samples do not provide complete sparse-edit targets"
+        )
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+    segment_ks = _segment_ks_from_args(args)
+    if getattr(args, "segment_ks", None) is not None:
+        args.segment_ks = segment_ks
+        args.segment_k = max(segment_ks)
+    summary_horizon_k = _summary_horizon_k_from_segment_ks(segment_ks)
+    train_segments_per_k = _split_segments_per_k(args, "train", segment_ks)
+    val_segments_per_k = _split_segments_per_k(args, "val", segment_ks)
+    train_segments_total = _split_total_segments(args, "train", segment_ks)
+    val_segments_total = _split_total_segments(args, "val", segment_ks)
+    planner_selected_tau_source = args.planner_selected_tau_source or args.planner_selected_duration_source
+    planner_selected_tau_blend_alpha = (
+        float(args.planner_selected_duration_blend_alpha)
+        if args.planner_selected_tau_blend_alpha is None
+        else float(args.planner_selected_tau_blend_alpha)
+    )
 
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -2088,42 +3272,120 @@ def main() -> None:
                 raise ValueError("--neural_teacher_path is required when --teacher_mode=neural")
             neural_teacher = _load_neural_teacher(args.neural_teacher_path, env_cfg, args.device)
 
-        train_env = MacroKMCEnv(env_cfg)
-        val_env = MacroKMCEnv(env_cfg)
-        train_rng = np.random.default_rng(args.seed)
-        val_rng = np.random.default_rng(args.seed + 1)
-        train_samples, train_stats = _collect_segments(
-            env=train_env,
-            num_segments=args.train_segments,
-            horizon_k=args.segment_k,
-            max_seed_vacancies=args.max_seed_vacancies,
-            max_candidate_sites=args.max_candidate_sites,
-            rng=train_rng,
-            include_stepwise_path_summary=include_stepwise_path_summary,
-            max_segments_per_rollout=args.max_segments_per_rollout,
-            teacher_candidate_neighbor_depth=args.teacher_candidate_neighbor_depth,
-            teacher_mode=args.teacher_mode,
-            neural_teacher=neural_teacher,
-            neural_teacher_device=args.device,
-            neural_teacher_temperature=args.neural_teacher_temperature,
-            neural_teacher_epsilon=args.neural_teacher_epsilon,
-        )
-        val_samples, val_stats = _collect_segments(
-            env=val_env,
-            num_segments=args.val_segments,
-            horizon_k=args.segment_k,
-            max_seed_vacancies=args.max_seed_vacancies,
-            max_candidate_sites=args.max_candidate_sites,
-            rng=val_rng,
-            include_stepwise_path_summary=include_stepwise_path_summary,
-            max_segments_per_rollout=args.max_segments_per_rollout,
-            teacher_candidate_neighbor_depth=args.teacher_candidate_neighbor_depth,
-            teacher_mode=args.teacher_mode,
-            neural_teacher=neural_teacher,
-            neural_teacher_device=args.device,
-            neural_teacher_temperature=args.neural_teacher_temperature,
-            neural_teacher_epsilon=args.neural_teacher_epsilon,
-        )
+        if args.planner_selected_from:
+            planner_model, planner_ckpt_args = _build_planner_model_from_checkpoint(args.planner_selected_from, args.device)
+            planner_reward_prediction_source = str(
+                args.planner_selected_reward_prediction_source
+                or planner_ckpt_args.get("reward_prediction_source", "raw")
+            )
+            print(
+                "Collecting planner-selected calibration cache: "
+                f"source={args.planner_selected_from} "
+                f"train={train_segments_total} val={val_segments_total} "
+                f"score_mode={args.planner_selected_score_mode} "
+                f"tau_source={planner_selected_tau_source} "
+                f"tau_blend_alpha={planner_selected_tau_blend_alpha:.3f} "
+                f"reward_source={planner_reward_prediction_source} "
+                f"allow_uncovered_reward_only={args.planner_selected_allow_uncovered_reward_only}",
+                flush=True,
+            )
+            train_samples, train_stats = _collect_planner_selected_segments(
+                env=MacroKMCEnv(copy.deepcopy(env_cfg)),
+                num_segments=train_segments_total,
+                segment_ks=segment_ks,
+                planner_model=planner_model,
+                planner_device=args.device,
+                max_seed_vacancies=args.max_seed_vacancies,
+                max_candidate_sites=args.max_candidate_sites,
+                rng=np.random.default_rng(args.seed),
+                include_stepwise_path_summary=include_stepwise_path_summary,
+                summary_horizon_k=summary_horizon_k,
+                max_segments_per_rollout=args.max_segments_per_rollout,
+                min_projected_changed_sites=args.planner_selected_min_projected_changed_sites,
+                duration_source=args.planner_selected_duration_source,
+                planner_tau_source=planner_selected_tau_source,
+                planner_score_mode=args.planner_selected_score_mode,
+                planner_tau_residual_penalty=args.planner_selected_tau_residual_penalty,
+                planner_k_penalty_power=args.planner_selected_k_penalty_power,
+                reward_prediction_source=planner_reward_prediction_source,
+                duration_blend_alpha=args.planner_selected_duration_blend_alpha,
+                planner_tau_blend_alpha=planner_selected_tau_blend_alpha,
+                allow_uncovered_reward_only=args.planner_selected_allow_uncovered_reward_only,
+                teacher_candidate_augmentation=not args.disable_teacher_candidate_augmentation,
+                teacher_candidate_neighbor_depth=args.teacher_candidate_neighbor_depth,
+                teacher_mode=args.teacher_mode,
+                neural_teacher=neural_teacher,
+                neural_teacher_device=args.device,
+                neural_teacher_temperature=args.neural_teacher_temperature,
+                neural_teacher_epsilon=args.neural_teacher_epsilon,
+            )
+            val_samples, val_stats = _collect_planner_selected_segments(
+                env=MacroKMCEnv(copy.deepcopy(env_cfg)),
+                num_segments=val_segments_total,
+                segment_ks=segment_ks,
+                planner_model=planner_model,
+                planner_device=args.device,
+                max_seed_vacancies=args.max_seed_vacancies,
+                max_candidate_sites=args.max_candidate_sites,
+                rng=np.random.default_rng(args.seed + 1),
+                include_stepwise_path_summary=include_stepwise_path_summary,
+                summary_horizon_k=summary_horizon_k,
+                max_segments_per_rollout=args.max_segments_per_rollout,
+                min_projected_changed_sites=args.planner_selected_min_projected_changed_sites,
+                duration_source=args.planner_selected_duration_source,
+                planner_tau_source=planner_selected_tau_source,
+                planner_score_mode=args.planner_selected_score_mode,
+                planner_tau_residual_penalty=args.planner_selected_tau_residual_penalty,
+                planner_k_penalty_power=args.planner_selected_k_penalty_power,
+                reward_prediction_source=planner_reward_prediction_source,
+                duration_blend_alpha=args.planner_selected_duration_blend_alpha,
+                planner_tau_blend_alpha=planner_selected_tau_blend_alpha,
+                allow_uncovered_reward_only=args.planner_selected_allow_uncovered_reward_only,
+                teacher_candidate_augmentation=not args.disable_teacher_candidate_augmentation,
+                teacher_candidate_neighbor_depth=args.teacher_candidate_neighbor_depth,
+                teacher_mode=args.teacher_mode,
+                neural_teacher=neural_teacher,
+                neural_teacher_device=args.device,
+                neural_teacher_temperature=args.neural_teacher_temperature,
+                neural_teacher_epsilon=args.neural_teacher_epsilon,
+            )
+        else:
+            train_samples, train_stats = _collect_segments_for_horizons(
+                env_cfg=env_cfg,
+                segment_ks=segment_ks,
+                num_segments_per_k=train_segments_per_k,
+                max_seed_vacancies=args.max_seed_vacancies,
+                max_candidate_sites=args.max_candidate_sites,
+                seed=args.seed,
+                include_stepwise_path_summary=include_stepwise_path_summary,
+                summary_horizon_k=summary_horizon_k,
+                max_segments_per_rollout=args.max_segments_per_rollout,
+                teacher_candidate_neighbor_depth=args.teacher_candidate_neighbor_depth,
+                teacher_candidate_augmentation=not args.disable_teacher_candidate_augmentation,
+                teacher_mode=args.teacher_mode,
+                neural_teacher=neural_teacher,
+                neural_teacher_device=args.device,
+                neural_teacher_temperature=args.neural_teacher_temperature,
+                neural_teacher_epsilon=args.neural_teacher_epsilon,
+            )
+            val_samples, val_stats = _collect_segments_for_horizons(
+                env_cfg=env_cfg,
+                segment_ks=segment_ks,
+                num_segments_per_k=val_segments_per_k,
+                max_seed_vacancies=args.max_seed_vacancies,
+                max_candidate_sites=args.max_candidate_sites,
+                seed=args.seed + 1,
+                include_stepwise_path_summary=include_stepwise_path_summary,
+                summary_horizon_k=summary_horizon_k,
+                max_segments_per_rollout=args.max_segments_per_rollout,
+                teacher_candidate_neighbor_depth=args.teacher_candidate_neighbor_depth,
+                teacher_candidate_augmentation=not args.disable_teacher_candidate_augmentation,
+                teacher_mode=args.teacher_mode,
+                neural_teacher=neural_teacher,
+                neural_teacher_device=args.device,
+                neural_teacher_temperature=args.neural_teacher_temperature,
+                neural_teacher_epsilon=args.neural_teacher_epsilon,
+            )
         dataset_stats = {"train": train_stats, "val": val_stats}
         torch.save(
             {
@@ -2134,7 +3396,7 @@ def main() -> None:
             },
             dataset_cache,
         )
-        print(json.dumps({"dataset_stats": dataset_stats}, ensure_ascii=False))
+        print(json.dumps({"dataset_stats": dataset_stats}, ensure_ascii=False), flush=True)
 
     train_loader = _build_loader(train_samples, args.batch_size, shuffle=True)
     val_loader = _build_loader(val_samples, args.batch_size, shuffle=False)
@@ -2151,30 +3413,45 @@ def main() -> None:
         patch_latent_dim=args.patch_latent_dim,
         path_latent_dim=args.path_latent_dim,
         global_summary_dim=16,
-        teacher_path_summary_dim=teacher_path_summary_dim(args.segment_k, include_stepwise_features=include_stepwise_path_summary),
-        max_macro_k=max(args.segment_k, 16),
+        teacher_path_summary_dim=teacher_path_summary_dim(summary_horizon_k, include_stepwise_features=include_stepwise_path_summary),
+        max_macro_k=max(summary_horizon_k, 16),
     ).to(args.device)
     model.realized_tau_head_loaded = True
-    if not args.resume:
-        _initialize_output_heads(model, train_samples)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
     weights = {
         "mask": 1.0,
         "type": 1.0,
         "pair": 0.0,
-        "tau": 1.0,
+        "tau": args.tau_weight,
+        "tau_log_mu": args.tau_log_mu_weight,
         "realized_tau": args.realized_tau_weight,
         "reward": args.reward_weight,
         "prior_reward": args.prior_reward_weight,
         "latent": 0.5,
         "proj": args.proj_weight,
-        "path": 0.05,
-        "prior_edit": 0.25,
-        "prior_latent": 0.25,
+        "path": args.path_weight,
+        "prior_edit": args.prior_edit_weight,
+        "prior_latent": args.prior_latent_weight,
     }
-    max_changed_sites = 2 * args.segment_k
+    max_changed_sites = 2 * summary_horizon_k
     best_score = float("inf")
     start_epoch = 1
+    if args.init_from:
+        ckpt = torch.load(args.init_from, map_location=args.device, weights_only=False)
+        missing, unexpected, resized, skipped = _load_model_weights(
+            model,
+            ckpt["model"],
+            allow_path_posterior_resize=True,
+        )
+        model.realized_tau_head_loaded = not any(key.startswith("realized_duration_head.") for key in missing)
+        if resized:
+            print(f"Init-from: prefix-resized path posterior tensors: {resized}", flush=True)
+        if skipped:
+            print(f"Init-from: skipped incompatible tensors: {skipped}", flush=True)
+        if missing:
+            print(f"Init-from: parameters left at initialization: {missing}", flush=True)
+        if unexpected:
+            print(f"Init-from: unexpected keys ignored: {unexpected}", flush=True)
     if args.resume and Path(args.resume).exists():
         ckpt = torch.load(args.resume, map_location=args.device, weights_only=False)
         _validate_resume_args(args, ckpt.get("args", {}))
@@ -2216,13 +3493,38 @@ def main() -> None:
                 checkpoint_best_score=ckpt.get("best_score"),
                 allow_checkpoint_best_score_fallback=allow_checkpoint_best_score_fallback,
                 proj_l1_score_weight=args.proj_l1_score_weight,
+                reward_prediction_source=args.reward_prediction_source,
             )
             print(f"Initialized best_score from {score_source} under current selection metric: {best_score:.4f}")
         else:
             best_score = float(ckpt.get("best_score", best_score))
 
+    _apply_output_head_initialization_policy(
+        model,
+        train_samples,
+        resume=args.resume,
+        init_from=args.init_from,
+        reinit_output_heads=args.reinit_output_heads,
+        reinit_reward_heads=args.reinit_reward_heads,
+        freeze_duration_heads=args.freeze_duration_heads,
+    )
+    if args.train_reward_heads_only:
+        _apply_reward_heads_only_training(model)
+    if args.train_reward_duration_heads_only:
+        _apply_reward_duration_heads_only_training(model)
+    if args.train_duration_heads_only:
+        _apply_duration_heads_only_training(model)
+    if args.train_duration_prior_path_only:
+        _apply_duration_prior_path_training(model)
+
     if args.eval_only:
-        metrics = _evaluate(model, val_loader, args.device, max_changed_sites)
+        metrics = _evaluate(
+            model,
+            val_loader,
+            args.device,
+            max_changed_sites,
+            reward_prediction_source=args.reward_prediction_source,
+        )
         print(json.dumps({"val": metrics, "dataset": dataset_stats}, ensure_ascii=False, indent=2))
         return
 
@@ -2246,6 +3548,11 @@ def main() -> None:
             count_loss_weight=args.count_loss_weight,
             detach_proj_encoder=args.detach_proj_encoder,
             reward_magnitude_weight=args.reward_magnitude_weight if epoch > args.gate_warmup_epochs else 0.0,
+            reward_gated_weight=args.reward_gated_weight,
+            reward_gate_weight=args.reward_gate_weight,
+            reward_zero_weight=args.reward_zero_weight,
+            reward_sign_weight=args.reward_sign_weight,
+            reward_prediction_source=args.reward_prediction_source,
         )
         elapsed = time.time() - t0
         train_msg = (
@@ -2253,6 +3560,7 @@ def main() -> None:
             f"mask={train_metrics['mask']:.4f} count={train_metrics['count']:.4f} pair={train_metrics['pair']:.4f} proj_mask={train_metrics['proj_mask']:.4f} type={train_metrics['type']:.4f} "
             f"prior_edit={train_metrics['prior_edit']:.4f} "
             f"tau={train_metrics['tau']:.4f} tau_prior={train_metrics['tau_prior']:.4f} "
+            f"tau_mu={train_metrics['tau_log_mu']:.4f} "
             f"tau_post={train_metrics['tau_post']:.4f} real_tau={train_metrics['realized_tau']:.4f} "
             f"real_tau_prior={train_metrics['realized_tau_prior']:.4f} real_tau_post={train_metrics['realized_tau_post']:.4f} "
             f"tau_post_scale={train_metrics['tau_post_scale']:.2f} reward={train_metrics['reward']:.4f} "
@@ -2260,12 +3568,18 @@ def main() -> None:
             f"path={train_metrics['path']:.4f} prior_latent={train_metrics['prior_latent']:.4f} "
             f"mask_aux={train_metrics['mask_aux_scale']:.2f} time={elapsed:.1f}s"
         )
-        print(train_msg)
+        print(train_msg, flush=True)
         with open(log_path, "a", encoding="utf-8") as fp:
             fp.write(train_msg + "\n")
 
         if epoch % args.eval_freq == 0 or epoch == 1:
-            val_metrics = _evaluate(model, val_loader, args.device, max_changed_sites)
+            val_metrics = _evaluate(
+                model,
+                val_loader,
+                args.device,
+                max_changed_sites,
+                reward_prediction_source=args.reward_prediction_source,
+            )
             if val_metrics.get("realized_tau_available", 1.0) >= 0.5:
                 realized_tau_msg = (
                     f"real_tau_nll={val_metrics['realized_tau_nll']:.4f} "
@@ -2287,7 +3601,7 @@ def main() -> None:
                 f"unchg_copy_acc={val_metrics['unchanged_copy_acc']:.4f} vac_copy_acc={val_metrics['unchanged_vacancy_copy_acc']:.4f} "
                 f"reach_violation={val_metrics['reachability_violation_rate']:.4f} proj_global_l1={val_metrics['projected_global_l1']:.4f}"
             )
-            print(val_msg)
+            print(val_msg, flush=True)
             with open(log_path, "a", encoding="utf-8") as fp:
                 fp.write(val_msg + "\n")
             metrics_payload = {
@@ -2312,7 +3626,7 @@ def main() -> None:
                     },
                     save_dir / "best_model.pt",
                 )
-                print(f"  >>> New best model: score={best_score:.4f}")
+                print(f"  >>> New best model: score={best_score:.4f}", flush=True)
 
         if epoch % args.save_freq == 0:
             torch.save(
@@ -2327,8 +3641,14 @@ def main() -> None:
                 save_dir / f"checkpoint_{epoch}.pt",
             )
 
-    final_metrics = _evaluate(model, val_loader, args.device, max_changed_sites)
-    print(json.dumps({"final_val": final_metrics, "dataset": dataset_stats}, ensure_ascii=False, indent=2))
+    final_metrics = _evaluate(
+        model,
+        val_loader,
+        args.device,
+        max_changed_sites,
+        reward_prediction_source=args.reward_prediction_source,
+    )
+    print(json.dumps({"final_val": final_metrics, "dataset": dataset_stats}, ensure_ascii=False, indent=2), flush=True)
     torch.save(
         {
             "model": model.state_dict(),

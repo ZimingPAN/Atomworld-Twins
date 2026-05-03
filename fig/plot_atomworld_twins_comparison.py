@@ -470,7 +470,7 @@ def _plot_time_alignment(
     ax_real.set_ylabel("Cumulative -Delta_E (eV, energy descent)", fontsize=11)
     ax_real.set_title(
         "Energy vs Time: Real Trajectory Order\n"
-        f"400 segments x k=4 = 1600 KMC steps, 8 rollouts, total KMC time = {cum_kmc_tau[-1]:.2f}s",
+        f"{len(true_tau)} teacher segments, total KMC time = {cum_kmc_tau[-1]:.2f}s",
         fontsize=12,
     )
     ax_real.legend(fontsize=9, ncol=3)
@@ -482,13 +482,16 @@ def _plot_time_alignment(
     cum_kmc_de_sorted = np.cumsum(true_de[order])
     cum_model_tau_sorted = np.cumsum(model_arrays["pred_tau"][order])
     cum_model_de_sorted = np.cumsum(model_arrays["pred_de"][order])
-    cum_ppo_tau_sorted = np.cumsum(ppo_arrays["pred_tau"][order])
-    cum_ppo_de_sorted = np.cumsum(ppo_arrays["pred_de"][order])
+    ppo_order = np.argsort(ppo_arrays["true_tau_exp"])
+    cum_ppo_kmc_tau_sorted = np.cumsum(ppo_arrays["true_tau_exp"][ppo_order])
+    cum_ppo_kmc_de_sorted = np.cumsum(ppo_arrays["true_de"][ppo_order])
+    cum_ppo_tau_sorted = np.cumsum(ppo_arrays["pred_tau"][ppo_order])
+    cum_ppo_de_sorted = np.cumsum(ppo_arrays["pred_de"][ppo_order])
     ax_sorted.plot(cum_kmc_tau_sorted, -cum_kmc_de_sorted, color=kmc_color, linewidth=2.6, alpha=0.85, label="Traditional KMC")
     ax_sorted.plot(cum_model_tau_sorted, -cum_kmc_de_sorted, color=model_color, linewidth=1.8, alpha=0.9, linestyle="-", label=f"{model_label} time")
     ax_sorted.plot(cum_kmc_tau_sorted, -cum_model_de_sorted, color=model_color, linewidth=1.4, alpha=0.65, linestyle="--", label=f"{model_label} energy")
-    ax_sorted.plot(cum_ppo_tau_sorted, -cum_kmc_de_sorted, color=ppo_color, linewidth=1.8, alpha=0.9, linestyle="-", label=f"{ppo_label} time")
-    ax_sorted.plot(cum_kmc_tau_sorted, -cum_ppo_de_sorted, color=ppo_color, linewidth=1.4, alpha=0.65, linestyle="--", label=f"{ppo_label} energy")
+    ax_sorted.plot(cum_ppo_tau_sorted, -cum_ppo_kmc_de_sorted, color=ppo_color, linewidth=1.8, alpha=0.9, linestyle="-", label=f"{ppo_label} time")
+    ax_sorted.plot(cum_ppo_kmc_tau_sorted, -cum_ppo_de_sorted, color=ppo_color, linewidth=1.4, alpha=0.65, linestyle="--", label=f"{ppo_label} energy")
     total_de = cum_kmc_de_sorted[-1]
     idx_90 = int(np.searchsorted(cum_kmc_de_sorted, total_de * 0.9))
     if idx_90 < len(cum_kmc_tau_sorted):

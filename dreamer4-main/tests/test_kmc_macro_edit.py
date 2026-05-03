@@ -16,7 +16,14 @@ if str(ROOT) not in sys.path:
 
 import train_dreamer_macro_edit as mod
 import eval_macro_time_alignment as eval_mod
-from dreamer4.macro_edit import MacroDreamerEditModel, macro_duration_baseline_log_tau, project_types_by_inventory, teacher_path_summary_dim
+import eval_macro_long_trajectory as long_eval_mod
+from dreamer4.macro_edit import (
+    MacroDreamerEditModel,
+    macro_duration_baseline_log_tau,
+    project_types_by_inventory,
+    projected_edit_logits_from_types,
+    teacher_path_summary_dim,
+)
 from train_dreamer_macro_edit import (
     MacroKMCEnv,
     _build_loader,
@@ -26,9 +33,12 @@ from train_dreamer_macro_edit import (
     _evaluate,
     _initialize_reward_heads,
     _initialize_best_score_from_saved_best,
+    _load_model_weights,
     _matched_pair_count_loss,
+    _normalize_segment_ks,
     _projected_mask_distill_loss,
     _projected_state_alignment_loss,
+    _reward_supervision_losses,
     _selection_score,
     _soft_directional_transition_counts,
     _soft_typed_change_count,
@@ -839,6 +849,456 @@ def test_initialize_output_heads_tracks_empirical_changed_rate_without_extra_spa
     assert math.isclose(torch.sigmoid(model.change_head.bias).item(), expected_changed_rate, rel_tol=1e-6)
 
 
+def test_init_from_reward_reinit_policy_runs_after_loaded_weights():
+    sample = mod.MacroSegmentSample(
+        start_obs=np.zeros((4,), dtype=np.float32),
+        next_obs=np.zeros((4,), dtype=np.float32),
+        start_vacancy_positions=np.asarray([[0, 0, 0]], dtype=np.int32),
+        start_cu_positions=np.asarray([[1, 1, 1]], dtype=np.int32),
+        global_summary=np.zeros((16,), dtype=np.float32),
+        teacher_path_summary=np.zeros((teacher_path_summary_dim(2),), dtype=np.float32),
+        candidate_positions=np.zeros((4, 3), dtype=np.float32),
+        nearest_vacancy_offset=np.zeros((4, 3), dtype=np.float32),
+        reach_depth=np.zeros((4,), dtype=np.float32),
+        is_start_vacancy=np.zeros((4,), dtype=np.float32),
+        current_types=np.zeros((4,), dtype=np.int64),
+        target_types=np.zeros((4,), dtype=np.int64),
+        candidate_mask=np.ones((4,), dtype=np.float32),
+        changed_mask=np.asarray([1.0, 1.0, 0.0, 0.0], dtype=np.float32),
+        tau_exp=1.0,
+        tau_real=1.0,
+        reward_sum=1.0,
+        horizon_k=2,
+        box_dims=np.asarray([10.0, 10.0, 10.0], dtype=np.float32),
+    )
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+    with torch.no_grad():
+        model.reward_head[-1].bias.fill_(7.0)
+        model.reward_gate_head[-1].bias.fill_(7.0)
+        model.duration_head[-1].bias.fill_(3.0)
+
+    mod._apply_output_head_initialization_policy(
+        model,
+        [sample],
+        resume=None,
+        init_from="previous.pt",
+        reinit_output_heads=False,
+        reinit_reward_heads=True,
+        freeze_duration_heads=False,
+    )
+
+    assert torch.allclose(model.reward_head[-1].bias, torch.zeros_like(model.reward_head[-1].bias))
+    assert not torch.allclose(model.reward_gate_head[-1].bias, torch.full_like(model.reward_gate_head[-1].bias, 7.0))
+    assert torch.allclose(model.duration_head[-1].bias, torch.full_like(model.duration_head[-1].bias, 3.0))
+
+
+def test_reward_heads_only_training_freezes_non_reward_parameters():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+
+    mod._apply_reward_heads_only_training(model)
+
+    reward_prefixes = (
+        "reward_head.",
+        "reward_context_head.",
+        "reward_gate_head.",
+        "reward_gate_context_head.",
+    )
+    for name, param in model.named_parameters():
+        assert param.requires_grad == name.startswith(reward_prefixes), name
+
+
+def test_reward_duration_heads_only_training_freezes_non_calibration_parameters():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+
+    mod._apply_reward_duration_heads_only_training(model)
+
+    trainable_prefixes = (
+        "reward_head.",
+        "reward_context_head.",
+        "reward_gate_head.",
+        "reward_gate_context_head.",
+        "duration_head.",
+        "realized_duration_head.",
+        "duration_context_head.",
+        "realized_duration_context_head.",
+    )
+    for name, param in model.named_parameters():
+        assert param.requires_grad == name.startswith(trainable_prefixes), name
+
+
+def test_duration_heads_only_training_freezes_reward_parameters():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+
+    mod._apply_duration_heads_only_training(model)
+
+    trainable_prefixes = (
+        "duration_head.",
+        "realized_duration_head.",
+        "duration_context_head.",
+        "realized_duration_context_head.",
+    )
+    for name, param in model.named_parameters():
+        assert param.requires_grad == name.startswith(trainable_prefixes), name
+
+
+def test_duration_prior_path_training_freezes_encoders_and_reward_parameters():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+
+    mod._apply_duration_prior_path_training(model)
+
+    trainable_prefixes = (
+        "k_embed.",
+        "path_prior.",
+        "macro_dynamics.",
+        "duration_head.",
+        "realized_duration_head.",
+        "duration_context_head.",
+        "realized_duration_context_head.",
+    )
+    for name, param in model.named_parameters():
+        assert param.requires_grad == name.startswith(trainable_prefixes), name
+
+
+def test_planner_selected_dataset_signature_records_mode_and_counts():
+    args = SimpleNamespace(
+        seed=3,
+        lattice_size=[10, 10, 10],
+        cu_density=0.01,
+        v_density=0.001,
+        segment_k=4,
+        segment_ks=[2, 4, 8],
+        max_seed_vacancies=16,
+        max_candidate_sites=256,
+        max_episode_steps=200,
+        max_vacancies=8,
+        max_defects=16,
+        max_shells=4,
+        neighbor_order="2NN",
+        reward_scale=10.0,
+        temperature=300.0,
+        stats_dim=10,
+        train_segments=999,
+        val_segments=999,
+        train_segments_per_k=11,
+        val_segments_per_k=5,
+        planner_selected_from="results/source/final_model.pt",
+        planner_selected_min_projected_changed_sites=2,
+        planner_selected_duration_source="model",
+        planner_selected_tau_source="baseline",
+        planner_selected_score_mode="energy_per_sqrt_tau",
+        planner_selected_reward_prediction_source="projected",
+        planner_selected_tau_residual_penalty=0.25,
+        planner_selected_k_penalty_power=0.5,
+        planner_selected_allow_uncovered_reward_only=True,
+        teacher_path_summary_mode="stepwise",
+        teacher_mode="kmc",
+        neural_teacher_temperature=1.0,
+        neural_teacher_epsilon=0.0,
+        max_segments_per_rollout=50,
+        teacher_candidate_neighbor_depth=1,
+        disable_teacher_candidate_augmentation=True,
+    )
+
+    signature = mod._dataset_signature(args)
+
+    assert signature["dataset_mode"] == "planner_selected"
+    assert signature["train_segments"] == 33
+    assert signature["val_segments"] == 15
+    assert signature["planner_selected_from"] == "results/source/final_model.pt"
+    assert signature["planner_selected_checkpoint"] == {
+        "path": "results/source/final_model.pt",
+        "exists": False,
+    }
+    assert signature["planner_selected_score_mode"] == "energy_per_sqrt_tau"
+    assert signature["planner_selected_tau_source"] == "baseline"
+    assert signature["planner_selected_reward_prediction_source"] == "projected"
+    assert signature["planner_selected_allow_uncovered_reward_only"] is True
+
+
+def test_train_planner_candidate_selection_matches_long_eval_semantics():
+    candidates = [
+        {"segment_k": 2, "selection_score": 1.0, "reachability_violation": 0.0, "projected_changed_count": 2.0},
+        {"segment_k": 4, "selection_score": 5.0, "reachability_violation": 1.0, "projected_changed_count": 4.0},
+        {"segment_k": 8, "selection_score": 2.0, "reachability_violation": 0.0, "projected_changed_count": 1.0},
+    ]
+
+    selected = mod._choose_planner_candidate(candidates, min_projected_changed_sites=2)
+
+    assert selected["segment_k"] == 2
+
+
+def test_planner_selected_reward_only_keeps_uncovered_segments(monkeypatch):
+    class FakeInner:
+        dims = np.array([10, 10, 10], dtype=np.int32)
+
+        def __init__(self):
+            self.after = False
+
+        def get_vacancy_array(self):
+            if self.after:
+                return np.array([[2, 0, 0]], dtype=np.int32)
+            return np.array([[0, 0, 0]], dtype=np.int32)
+
+        def get_cu_array(self):
+            return np.array([[1, 0, 0]], dtype=np.int32)
+
+    class FakeEnv:
+        cfg = {"reward_scale": 10.0}
+
+        def __init__(self):
+            self.env = FakeInner()
+
+        def reset(self):
+            self.env.after = False
+            return np.zeros((2, 2), dtype=np.float32)
+
+        def step(self, _action):
+            self.env.after = True
+            info = {
+                "expected_delta_t": 0.25,
+                "delta_t": 0.3,
+                "total_rate": 4.0,
+                "delta_E": 0.2,
+                "dir_idx": 0,
+                "moving_type": 0,
+                "old_pos": np.array([1, 0, 0], dtype=np.int32),
+                "new_pos": np.array([0, 0, 0], dtype=np.int32),
+                "vac_idx": 0,
+            }
+            return np.ones((2, 2), dtype=np.float32), 2.0, False, info
+
+    monkeypatch.setattr(
+        mod,
+        "_predict_planner_candidate_for_horizon",
+        lambda **_: {
+            "segment_k": 8,
+            "selection_score": 1.0,
+            "reachability_violation": 0.0,
+            "projected_changed_count": 2.0,
+        },
+    )
+    monkeypatch.setattr(
+        mod,
+        "_build_candidate_positions",
+        lambda *_args, **_kwargs: (
+            [(0, 0, 0), (1, 0, 0)],
+            {(0, 0, 0): 0, (1, 0, 0): 1},
+            np.array([[0, 0, 0]], dtype=np.int32),
+        ),
+    )
+    monkeypatch.setattr(mod, "_global_summary", lambda _env: np.zeros((18,), dtype=np.float32))
+    monkeypatch.setattr(mod, "_sample_teacher_action", lambda _env, _rng: object())
+
+    samples, stats = mod._collect_planner_selected_segments(
+        env=FakeEnv(),
+        num_segments=1,
+        segment_ks=[2, 4, 8],
+        planner_model=torch.nn.Identity(),
+        planner_device="cpu",
+        max_seed_vacancies=1,
+        max_candidate_sites=4,
+        rng=np.random.default_rng(0),
+        include_stepwise_path_summary=True,
+        summary_horizon_k=8,
+        max_segments_per_rollout=0,
+        min_projected_changed_sites=2,
+        duration_source="model",
+        planner_tau_source="model",
+        planner_score_mode="energy_per_tau",
+        planner_tau_residual_penalty=0.0,
+        planner_k_penalty_power=0.0,
+        reward_prediction_source="projected",
+        allow_uncovered_reward_only=True,
+        teacher_candidate_augmentation=False,
+    )
+
+    assert len(samples) == 1
+    assert stats["reward_only_uncovered"] == 1
+    assert stats["skipped_uncovered"] == 0
+    assert stats["selected_attempt_k_histogram"]["8"] == 1
+    assert stats["chosen_k_histogram"]["8"] == 1
+
+
+def test_planner_selected_collector_augments_candidates_with_teacher_path(monkeypatch):
+    class FakeInner:
+        dims = np.array([10, 10, 10], dtype=np.int32)
+        NN1 = np.zeros((1, 3), dtype=np.int32)
+
+        def __init__(self):
+            self.after = False
+
+        def get_vacancy_array(self):
+            if self.after:
+                return np.array([[2, 0, 0]], dtype=np.int32)
+            return np.array([[0, 0, 0]], dtype=np.int32)
+
+        def get_cu_array(self):
+            return np.array([[1, 0, 0]], dtype=np.int32)
+
+    class FakeEnv:
+        cfg = {"reward_scale": 10.0}
+
+        def __init__(self):
+            self.env = FakeInner()
+
+        def reset(self):
+            self.env.after = False
+            return np.zeros((2, 2), dtype=np.float32)
+
+        def step(self, _action):
+            self.env.after = True
+            info = {
+                "expected_delta_t": 0.25,
+                "delta_t": 0.3,
+                "total_rate": 4.0,
+                "delta_E": 0.2,
+                "dir_idx": 0,
+                "moving_type": 0,
+                "old_pos": np.array([1, 0, 0], dtype=np.int32),
+                "new_pos": np.array([0, 0, 0], dtype=np.int32),
+                "vac_idx": 0,
+            }
+            return np.ones((2, 2), dtype=np.float32), 2.0, False, info
+
+    augment_calls = []
+    monkeypatch.setattr(
+        mod,
+        "_predict_planner_candidate_for_horizon",
+        lambda **_: {
+            "segment_k": 8,
+            "selection_score": 1.0,
+            "reachability_violation": 0.0,
+            "projected_changed_count": 2.0,
+        },
+    )
+    monkeypatch.setattr(
+        mod,
+        "_build_candidate_positions",
+        lambda *_args, **_kwargs: (
+            [(0, 0, 0), (1, 0, 0)],
+            {(0, 0, 0): 0, (1, 0, 0): 1},
+            np.array([[0, 0, 0]], dtype=np.int32),
+        ),
+    )
+
+    def fake_augment(**kwargs):
+        augment_calls.append(set(kwargs["touched_positions"]))
+        return (
+            [(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+            {(0, 0, 0): 0, (1, 0, 0): 1, (2, 0, 0): 1},
+            kwargs["seeds"],
+        )
+
+    monkeypatch.setattr(mod, "_augment_candidate_positions_with_teacher_path", fake_augment)
+    monkeypatch.setattr(mod, "_global_summary", lambda _env: np.zeros((18,), dtype=np.float32))
+    monkeypatch.setattr(mod, "_sample_teacher_action", lambda _env, _rng: object())
+
+    samples, stats = mod._collect_planner_selected_segments(
+        env=FakeEnv(),
+        num_segments=1,
+        segment_ks=[2, 4, 8],
+        planner_model=torch.nn.Identity(),
+        planner_device="cpu",
+        max_seed_vacancies=1,
+        max_candidate_sites=4,
+        rng=np.random.default_rng(0),
+        include_stepwise_path_summary=True,
+        summary_horizon_k=8,
+        max_segments_per_rollout=0,
+        min_projected_changed_sites=2,
+        duration_source="model",
+        planner_tau_source="model",
+        planner_score_mode="energy_per_tau",
+        planner_tau_residual_penalty=0.0,
+        planner_k_penalty_power=0.0,
+        reward_prediction_source="projected",
+        allow_uncovered_reward_only=False,
+        teacher_candidate_augmentation=True,
+    )
+
+    assert len(samples) == 1
+    assert stats["skipped_uncovered"] == 0
+    assert stats["reward_only_uncovered"] == 0
+    assert augment_calls
+    assert (1, 0, 0) in augment_calls[0]
+    assert (0, 0, 0) in augment_calls[0]
+
+
 def test_validate_resume_args_rejects_segment_k_mismatch():
     with pytest.raises(ValueError, match="segment_k"):
         _validate_resume_args(SimpleNamespace(segment_k=4), {"segment_k": 2})
@@ -860,7 +1320,7 @@ def test_initialize_best_score_from_saved_best_uses_best_checkpoint(tmp_path, mo
     best_model.weight.data.fill_(0.1)
     torch.save({"model": best_model.state_dict()}, tmp_path / "best_model.pt")
 
-    def fake_evaluate(eval_model, loader, device, max_changed_sites):
+    def fake_evaluate(eval_model, loader, device, max_changed_sites, **_kwargs):
         tau_log_mae = float(eval_model.weight.detach().cpu().item())
         return {
             "tau_log_mae": tau_log_mae,
@@ -890,7 +1350,7 @@ def test_initialize_best_score_from_checkpoint_fallback_uses_stored_best_score(t
     model = torch.nn.Linear(1, 1, bias=False)
     model.weight.data.fill_(0.9)
 
-    def fake_evaluate(eval_model, loader, device, max_changed_sites):
+    def fake_evaluate(eval_model, loader, device, max_changed_sites, **_kwargs):
         tau_log_mae = float(eval_model.weight.detach().cpu().item())
         return {
             "tau_log_mae": tau_log_mae,
@@ -921,7 +1381,7 @@ def test_initialize_best_score_from_checkpoint_skips_stored_best_score_for_new_s
     model = torch.nn.Linear(1, 1, bias=False)
     model.weight.data.fill_(0.9)
 
-    def fake_evaluate(eval_model, loader, device, max_changed_sites):
+    def fake_evaluate(eval_model, loader, device, max_changed_sites, **_kwargs):
         tau_log_mae = float(eval_model.weight.detach().cpu().item())
         return {
             "tau_log_mae": tau_log_mae,
@@ -956,7 +1416,7 @@ def test_initialize_best_score_skips_incompatible_saved_best_model(tmp_path, mon
     incompatible_best_model = torch.nn.Linear(2, 1, bias=False)
     torch.save({"model": incompatible_best_model.state_dict()}, tmp_path / "best_model.pt")
 
-    def fake_evaluate(eval_model, loader, device, max_changed_sites):
+    def fake_evaluate(eval_model, loader, device, max_changed_sites, **_kwargs):
         tau_log_mae = float(eval_model.weight.detach().cpu().item())
         return {
             "tau_log_mae": tau_log_mae,
@@ -1048,3 +1508,383 @@ def test_compute_lognormal_distribution_metrics_reports_calibrated_center_case()
     assert metrics["coverage_95"] == pytest.approx(1.0)
     assert metrics["pit_mean"] == pytest.approx(0.5)
     assert metrics["pit_ks"] == pytest.approx(0.5, rel=1e-6)
+
+
+def test_teacher_path_summary_pads_multik_stepwise_features():
+    path_infos = [
+        {
+            "dir_idx": 0,
+            "moving_type": 1,
+            "total_rate": 10.0,
+            "expected_delta_t": 0.1,
+            "delta_E": 0.5,
+            "old_pos": np.asarray([0, 0, 0], dtype=np.int32),
+            "new_pos": np.asarray([1, 1, 1], dtype=np.int32),
+            "vac_idx": 0,
+        },
+        {
+            "dir_idx": 3,
+            "moving_type": 0,
+            "total_rate": 4.0,
+            "expected_delta_t": 0.25,
+            "delta_E": -0.2,
+            "old_pos": np.asarray([1, 1, 1], dtype=np.int32),
+            "new_pos": np.asarray([2, 2, 2], dtype=np.int32),
+            "vac_idx": 1,
+        },
+    ]
+
+    summary = mod._teacher_path_summary(path_infos, max_candidate_sites=32, horizon_k=2, summary_horizon_k=8)
+
+    assert summary.shape == (teacher_path_summary_dim(8),)
+    assert summary[17] == pytest.approx(1.0)
+    assert summary[18] == pytest.approx(math.log(0.1 + 1e-12))
+    assert summary[19] == pytest.approx(math.log(0.25 + 1e-12))
+    assert np.allclose(summary[20:26], -27.0)
+    assert summary[26] == pytest.approx(0.5)
+    assert summary[27] == pytest.approx(-0.2)
+    assert np.allclose(summary[28:34], 0.0)
+
+
+def test_eval_cache_validation_accepts_mixed_k_signature(tmp_path):
+    payload = {
+        "train": [],
+        "val": [],
+        "stats": {},
+        "signature": {"dataset_version": 9, "segment_ks": [2, 4, 8], "summary_horizon_k": 8},
+    }
+    cache_path = tmp_path / "segments.pt"
+    torch.save(payload, cache_path)
+
+    samples, _stats, signature = eval_mod._load_samples(
+        cache_path,
+        "val",
+        0,
+        expected_segment_ks=[8, 2, 4],
+        expected_summary_horizon_k=8,
+    )
+
+    assert samples == []
+    assert signature["segment_ks"] == [2, 4, 8]
+    with pytest.raises(ValueError, match="segment_ks"):
+        eval_mod._load_samples(cache_path, "val", 0, expected_segment_ks=[4])
+    with pytest.raises(ValueError, match="summary_horizon_k"):
+        eval_mod._load_samples(
+            cache_path,
+            "val",
+            0,
+            expected_segment_ks=[2, 4, 8],
+            expected_summary_horizon_k=4,
+        )
+
+
+def test_init_from_resizes_path_posterior_for_multik_summary():
+    old_model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(4),
+        max_macro_k=8,
+    )
+    new_model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(8),
+        max_macro_k=8,
+    )
+    old_state = old_model.state_dict()
+
+    _missing, _unexpected, resized, skipped = _load_model_weights(
+        new_model,
+        old_state,
+        allow_path_posterior_resize=True,
+    )
+
+    assert any(key.startswith("path_posterior.") for key in resized)
+    assert not skipped
+    loaded = new_model.state_dict()["path_posterior.net.1.weight"]
+    old = old_state["path_posterior.net.1.weight"]
+    assert torch.allclose(loaded[: old.shape[0], : old.shape[1]], old)
+    assert torch.allclose(loaded[:, old.shape[1] :], torch.zeros_like(loaded[:, old.shape[1] :]))
+
+
+def test_projection_uses_per_sample_max_changed_sites_cap():
+    current_types = torch.tensor([[2, 0, 2, 0], [2, 0, 2, 0]], dtype=torch.long)
+    change_logits = torch.full((2, 4), 8.0, dtype=torch.float32)
+    type_logits = torch.full((2, 4, 3), -6.0, dtype=torch.float32)
+    type_logits[:, 0, 0] = 6.0
+    type_logits[:, 1, 2] = 6.0
+    type_logits[:, 2, 0] = 6.0
+    type_logits[:, 3, 2] = 6.0
+    node_mask = torch.ones((2, 4), dtype=torch.float32)
+    positions = torch.tensor(
+        [
+            [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [4.0, 0.0, 0.0], [5.0, 1.0, 1.0]],
+            [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [4.0, 0.0, 0.0], [5.0, 1.0, 1.0]],
+        ],
+        dtype=torch.float32,
+    )
+    box_dims = torch.tensor([[20.0, 20.0, 20.0], [20.0, 20.0, 20.0]], dtype=torch.float32)
+
+    _types, changed_mask, _cost, violations = project_types_by_inventory(
+        current_types=current_types,
+        change_logits=change_logits,
+        type_logits=type_logits,
+        node_mask=node_mask,
+        positions=positions,
+        box_dims=box_dims,
+        horizon_k=torch.tensor([4, 4], dtype=torch.long),
+        max_changed_sites=torch.tensor([2, 4], dtype=torch.long),
+    )
+
+    assert changed_mask[0].sum().item() == pytest.approx(2.0)
+    assert changed_mask[1].sum().item() == pytest.approx(4.0)
+    assert torch.all(violations == 0)
+
+
+def test_long_eval_planner_chooses_best_legal_energy_per_time_candidate():
+    candidates = [
+        {"segment_k": 2, "selection_score": 1.0, "reachability_violation": 0.0, "projected_changed_count": 2.0},
+        {"segment_k": 4, "selection_score": 5.0, "reachability_violation": 1.0, "projected_changed_count": 4.0},
+        {"segment_k": 8, "selection_score": 2.0, "reachability_violation": 0.0, "projected_changed_count": 2.0},
+    ]
+
+    selected = long_eval_mod._choose_planner_candidate(candidates)
+
+    assert selected["segment_k"] == 8
+
+
+def test_long_eval_planner_rejects_all_illegal_candidates():
+    candidates = [
+        {"segment_k": 2, "selection_score": 1.0, "reachability_violation": 1.0, "projected_changed_count": 2.0},
+        {"segment_k": 4, "selection_score": 2.0, "reachability_violation": 1.0, "projected_changed_count": 2.0},
+    ]
+
+    assert long_eval_mod._choose_planner_candidate(candidates) is None
+
+
+def test_long_eval_planner_rejects_projected_noop_candidates():
+    candidates = [
+        {"segment_k": 2, "selection_score": 4.0, "reachability_violation": 0.0, "projected_changed_count": 0.0},
+        {"segment_k": 4, "selection_score": 3.0, "reachability_violation": 0.0, "projected_changed_count": 1.0},
+    ]
+
+    assert long_eval_mod._choose_planner_candidate(candidates, min_projected_changed_sites=2) is None
+
+
+def test_long_eval_teacher_segment_marks_lattice_noop(monkeypatch):
+    class InnerEnv:
+        def __init__(self):
+            self.vacancies = np.asarray([[0, 0, 0]], dtype=np.int32)
+            self.cu = np.asarray([[1, 0, 0]], dtype=np.int32)
+
+        def get_vacancy_array(self):
+            return self.vacancies.copy()
+
+        def get_cu_array(self):
+            return self.cu.copy()
+
+    class FakeEnv:
+        def __init__(self):
+            self.env = InnerEnv()
+
+        def step(self, action):
+            return np.zeros((1,), dtype=np.float32), 0.0, False, {
+                "expected_delta_t": 0.25,
+                "delta_t": 0.5,
+            }
+
+    monkeypatch.setattr(long_eval_mod.mod, "_sample_teacher_action", lambda env, rng: 0)
+
+    segment = long_eval_mod._collect_teacher_segment(FakeEnv(), horizon_k=2, rng=np.random.default_rng(0))
+
+    assert segment["is_noop"] is True
+    assert segment["changed_site_count"] == 0
+    assert segment["tau_exp"] == pytest.approx(0.5)
+    assert segment["tau_real"] == pytest.approx(1.0)
+
+
+def test_long_eval_teacher_segment_marks_lattice_change(monkeypatch):
+    class InnerEnv:
+        def __init__(self):
+            self.vacancies = np.asarray([[0, 0, 0]], dtype=np.int32)
+            self.cu = np.asarray([[1, 0, 0]], dtype=np.int32)
+
+        def get_vacancy_array(self):
+            return self.vacancies.copy()
+
+        def get_cu_array(self):
+            return self.cu.copy()
+
+    class FakeEnv:
+        def __init__(self):
+            self.env = InnerEnv()
+
+        def step(self, action):
+            self.env.vacancies = np.asarray([[0, 0, 1]], dtype=np.int32)
+            return np.zeros((1,), dtype=np.float32), 1.0, False, {
+                "expected_delta_t": 0.25,
+                "delta_t": 0.5,
+            }
+
+    monkeypatch.setattr(long_eval_mod.mod, "_sample_teacher_action", lambda env, rng: 0)
+
+    segment = long_eval_mod._collect_teacher_segment(FakeEnv(), horizon_k=1, rng=np.random.default_rng(0))
+
+    assert segment["is_noop"] is False
+    assert segment["changed_site_count"] > 0
+    assert segment["reward_sum"] == pytest.approx(1.0)
+
+
+def test_long_eval_planner_can_score_with_baseline_tau_source():
+    model_score, model_tau = long_eval_mod._compute_selection_score(
+        pred_reward_sum=2.0,
+        reward_scale=10.0,
+        model_expected_tau=0.2,
+        baseline_expected_tau=0.1,
+        horizon_k=4,
+        planner_tau_source="model",
+    )
+    baseline_score, baseline_tau = long_eval_mod._compute_selection_score(
+        pred_reward_sum=2.0,
+        reward_scale=10.0,
+        model_expected_tau=0.2,
+        baseline_expected_tau=0.1,
+        horizon_k=4,
+        planner_tau_source="baseline",
+    )
+
+    assert model_tau == pytest.approx(0.2)
+    assert baseline_tau == pytest.approx(0.1)
+    assert baseline_score == pytest.approx(2.0 * model_score)
+
+
+def test_long_eval_planner_can_score_with_blended_tau_source():
+    score, tau = long_eval_mod._compute_selection_score(
+        pred_reward_sum=2.0,
+        reward_scale=10.0,
+        model_expected_tau=0.2,
+        baseline_expected_tau=0.05,
+        horizon_k=4,
+        planner_tau_source="blend",
+        planner_tau_blend_alpha=0.5,
+    )
+
+    assert tau == pytest.approx(0.1)
+    assert score == pytest.approx(2.0)
+
+
+def test_long_eval_duration_log_offset_scales_model_component():
+    model_tau = long_eval_mod._duration_from_source(
+        model_expected_tau=0.2,
+        baseline_expected_tau=0.05,
+        source="model",
+        duration_log_offset=math.log(0.5),
+    )
+    blend_tau = long_eval_mod._duration_from_source(
+        model_expected_tau=0.2,
+        baseline_expected_tau=0.05,
+        source="blend",
+        blend_alpha=0.5,
+        duration_log_offset=math.log(0.5),
+    )
+
+    assert model_tau == pytest.approx(0.1)
+    assert blend_tau == pytest.approx(math.sqrt(0.05 * 0.1))
+
+
+def test_long_eval_estimates_duration_log_offset_from_calibration_segments():
+    offset = long_eval_mod._estimate_duration_log_offset(
+        base_log_offset=0.0,
+        predicted_tau=[2.0, 4.0],
+        target_tau=[1.0, 2.0],
+    )
+
+    assert offset == pytest.approx(math.log(0.5))
+
+
+def test_long_eval_planner_duration_residual_penalty_is_multiplicative():
+    unpenalized, _ = long_eval_mod._compute_selection_score(
+        pred_reward_sum=2.0,
+        reward_scale=10.0,
+        model_expected_tau=0.2,
+        baseline_expected_tau=0.1,
+        horizon_k=4,
+        planner_tau_residual_penalty=0.0,
+    )
+    penalized, _ = long_eval_mod._compute_selection_score(
+        pred_reward_sum=2.0,
+        reward_scale=10.0,
+        model_expected_tau=0.2,
+        baseline_expected_tau=0.1,
+        horizon_k=4,
+        planner_tau_residual_penalty=1.0,
+    )
+
+    assert penalized < unpenalized
+    assert penalized == pytest.approx(unpenalized * 0.5)
+
+
+def test_reward_supervision_loss_weights_affect_zero_gate_terms():
+    reward_hat = torch.tensor([1.0, 0.5], dtype=torch.float32)
+    gate_logit = torch.tensor([1.0, -1.0], dtype=torch.float32)
+    target_reward = torch.tensor([0.0, 2.0], dtype=torch.float32)
+
+    base = _reward_supervision_losses(
+        reward_hat,
+        gate_logit,
+        target_reward,
+        reward_magnitude_weight=1.0,
+        reward_gate_weight=0.25,
+        reward_zero_weight=0.5,
+    )
+    stronger_zero_gate = _reward_supervision_losses(
+        reward_hat,
+        gate_logit,
+        target_reward,
+        reward_magnitude_weight=1.0,
+        reward_gate_weight=2.0,
+        reward_zero_weight=2.0,
+    )
+
+    assert stronger_zero_gate["loss"].item() > base["loss"].item()
+    assert torch.allclose(stronger_zero_gate["gated_reward"], reward_hat * torch.sigmoid(gate_logit))
+
+
+def test_projected_edit_logits_encode_projection_closed_context():
+    current_types = torch.tensor([[2, 0, 1, 0]], dtype=torch.long)
+    projected_types = torch.tensor([[0, 2, 1, 0]], dtype=torch.long)
+    mask = torch.tensor([[1.0, 1.0, 1.0, 0.0]], dtype=torch.float32)
+
+    change_logits, type_logits = projected_edit_logits_from_types(current_types, projected_types, mask, logit=5.0)
+
+    assert change_logits[0, 0].item() == pytest.approx(5.0)
+    assert change_logits[0, 1].item() == pytest.approx(5.0)
+    assert change_logits[0, 2].item() == pytest.approx(-5.0)
+    assert change_logits[0, 3].item() == pytest.approx(-5.0)
+    assert type_logits.argmax(dim=-1).tolist() == projected_types.tolist()
+
+
+def test_normalize_segment_ks_sorts_and_deduplicates():
+    assert _normalize_segment_ks(4, [8, 2, 4, 2]) == [2, 4, 8]
+    with pytest.raises(ValueError):
+        _normalize_segment_ks(4, [0, 2])

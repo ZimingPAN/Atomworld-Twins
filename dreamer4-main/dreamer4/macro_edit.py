@@ -77,6 +77,29 @@ def _soft_reward_context_features(
     return features / horizon
 
 
+def projected_edit_logits_from_types(
+    current_types: torch.Tensor,
+    projected_types: torch.Tensor,
+    candidate_mask: torch.Tensor,
+    *,
+    logit: float = 8.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    valid = candidate_mask > 0
+    changed = (projected_types != current_types) & valid
+    pos = torch.full_like(candidate_mask, float(logit), dtype=torch.float32)
+    neg = torch.full_like(candidate_mask, -float(logit), dtype=torch.float32)
+    change_logits = torch.where(changed, pos, neg)
+    type_logits = torch.full(
+        (*projected_types.shape, NUM_SITE_TYPES),
+        -float(logit),
+        dtype=torch.float32,
+        device=projected_types.device,
+    )
+    safe_types = projected_types.clamp(min=0, max=NUM_SITE_TYPES - 1).long()
+    type_logits.scatter_(-1, safe_types.unsqueeze(-1), float(logit))
+    return change_logits, type_logits
+
+
 class _PatchEdgeBlock(nn.Module):
     def __init__(self, hidden_size: int) -> None:
         super().__init__()
@@ -358,6 +381,18 @@ class MacroDreamerEditModel(nn.Module):
             nn.SiLU(),
             nn.Linear(256, 2),
         )
+        self.duration_context_head = nn.Sequential(
+            nn.LayerNorm(reward_context_in),
+            nn.Linear(reward_context_in, 128),
+            nn.SiLU(),
+            nn.Linear(128, 2),
+        )
+        self.realized_duration_context_head = nn.Sequential(
+            nn.LayerNorm(reward_context_in),
+            nn.Linear(reward_context_in, 128),
+            nn.SiLU(),
+            nn.Linear(128, 2),
+        )
         # Binary gate: predicts P(dE != 0) to separate zero-dE from nonzero-dE segments
         self.reward_gate_head = nn.Sequential(
             nn.LayerNorm(reward_time_in),
@@ -376,6 +411,10 @@ class MacroDreamerEditModel(nn.Module):
             self.reward_context_head[-1].bias.zero_()
             self.reward_gate_context_head[-1].weight.zero_()
             self.reward_gate_context_head[-1].bias.zero_()
+            self.duration_context_head[-1].weight.zero_()
+            self.duration_context_head[-1].bias.zero_()
+            self.realized_duration_context_head[-1].weight.zero_()
+            self.realized_duration_context_head[-1].bias.zero_()
 
     def encode_global(self, obs: torch.Tensor) -> torch.Tensor:
         latent = self.global_encoder(obs)
@@ -468,8 +507,12 @@ class MacroDreamerEditModel(nn.Module):
         duration_hidden: torch.Tensor,
         global_summary: torch.Tensor,
         horizon_k: torch.Tensor,
+        context_delta: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        residual_mu, log_sigma = duration_head(duration_hidden).chunk(2, dim=-1)
+        raw = duration_head(duration_hidden)
+        if context_delta is not None:
+            raw = raw + context_delta
+        residual_mu, log_sigma = raw.chunk(2, dim=-1)
         mu = macro_duration_baseline_log_tau(global_summary, horizon_k).unsqueeze(-1) + residual_mu
         return mu.squeeze(-1), log_sigma.squeeze(-1).clamp(min=-6.0, max=2.0)
 
@@ -512,6 +555,8 @@ class MacroDreamerEditModel(nn.Module):
         reward_context = torch.cat([reward_patch_latent, reward_edit_features, k_emb], dim=-1)
         reward = self.reward_head(reward_hidden).squeeze(-1) + self.reward_context_head(reward_context).squeeze(-1)
         gate_logit = self.reward_gate_head(reward_hidden).squeeze(-1) + self.reward_gate_context_head(reward_context).squeeze(-1)
+        duration_context_delta = self.duration_context_head(reward_context)
+        realized_duration_context_delta = self.realized_duration_context_head(reward_context)
 
         if detach_duration_inputs:
             duration_inputs = [
@@ -529,12 +574,14 @@ class MacroDreamerEditModel(nn.Module):
             duration_hidden,
             global_summary,
             horizon_k,
+            duration_context_delta,
         )
         realized_tau_mu, realized_tau_log_sigma = self._duration_stats_from_head(
             self.realized_duration_head,
             duration_hidden,
             global_summary,
             horizon_k,
+            realized_duration_context_delta,
         )
         return {
             "reward": reward,
@@ -680,7 +727,7 @@ def project_types_by_inventory(
     positions: torch.Tensor,
     box_dims: torch.Tensor,
     horizon_k: torch.Tensor,
-    max_changed_sites: int,
+    max_changed_sites: int | torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     final_types = current_types.clone()
     changed_mask = torch.zeros_like(node_mask, dtype=torch.float32)
@@ -688,6 +735,10 @@ def project_types_by_inventory(
     violations = torch.zeros((current_types.shape[0],), dtype=torch.float32, device=current_types.device)
     batch = current_types.shape[0]
     for batch_idx in range(batch):
+        if torch.is_tensor(max_changed_sites):
+            sample_max_changed_sites = int(max_changed_sites[batch_idx].item())
+        else:
+            sample_max_changed_sites = int(max_changed_sites)
         valid_idx = torch.nonzero(node_mask[batch_idx] > 0, as_tuple=False).squeeze(-1)
         if valid_idx.numel() == 0:
             continue
@@ -740,7 +791,7 @@ def project_types_by_inventory(
             budget = 1
         if budget == 1 and float(typed_change_mass.max().item()) > 0.25:
             budget = 2
-        budget = max(0, min(int(max_changed_sites), int(valid_idx.numel()), int(available_pair_budget), budget))
+        budget = max(0, min(sample_max_changed_sites, int(valid_idx.numel()), int(available_pair_budget), budget))
         if budget % 2 == 1:
             budget -= 1
         initial_budget = budget

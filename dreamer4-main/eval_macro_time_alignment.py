@@ -24,6 +24,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--save_all_samples", action="store_true",
                         help="Save all per-sample predictions (not just preview) to output JSON")
+    parser.add_argument("--duration_source", type=str, default="model", choices=["model", "baseline", "blend"],
+                        help="Expected tau source for reported paired metrics. 'blend' interpolates log tau between CTMC baseline and model.")
+    parser.add_argument("--duration_blend_alpha", type=float, default=1.0,
+                        help="For --duration_source blend, alpha in log_tau = (1-alpha)*baseline + alpha*model.")
     return parser.parse_args()
 
 
@@ -60,9 +64,20 @@ def _compute_log_metrics(pred: np.ndarray, target: np.ndarray) -> dict[str, floa
     }
 
 
+def _segment_ks_from_ckpt_args(args: dict[str, object]) -> list[int]:
+    if args.get("segment_ks"):
+        return sorted({int(k) for k in args["segment_ks"]})
+    return [int(args["segment_k"])]
+
+
+def _summary_horizon_k_from_ckpt_args(args: dict[str, object]) -> int:
+    return max(_segment_ks_from_ckpt_args(args))
+
+
 def _build_model(ckpt: dict[str, object], device: str) -> mod.MacroDreamerEditModel:
     args = ckpt["args"]
     include_stepwise_path_summary = args.get("teacher_path_summary_mode", "stepwise") == "stepwise"
+    summary_horizon_k = _summary_horizon_k_from_ckpt_args(args)
     model = mod.MacroDreamerEditModel(
         max_vacancies=args["max_vacancies"],
         max_defects=args["max_defects"],
@@ -76,8 +91,8 @@ def _build_model(ckpt: dict[str, object], device: str) -> mod.MacroDreamerEditMo
         patch_latent_dim=args["patch_latent_dim"],
         path_latent_dim=args["path_latent_dim"],
         global_summary_dim=16,
-        teacher_path_summary_dim=mod.teacher_path_summary_dim(int(args["segment_k"]), include_stepwise_features=include_stepwise_path_summary),
-        max_macro_k=max(int(args["segment_k"]), 16),
+        teacher_path_summary_dim=mod.teacher_path_summary_dim(summary_horizon_k, include_stepwise_features=include_stepwise_path_summary),
+        max_macro_k=max(summary_horizon_k, 16),
     ).to(device)
     missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
     model.realized_tau_head_loaded = not any(key.startswith("realized_duration_head.") for key in missing)
@@ -89,21 +104,44 @@ def _build_model(ckpt: dict[str, object], device: str) -> mod.MacroDreamerEditMo
     return model
 
 
-def _load_samples(cache_path: Path, split: str, limit: int, expected_segment_k: int) -> tuple[list[mod.MacroSegmentSample], dict[str, object], dict[str, object]]:
+def _load_samples(
+    cache_path: Path,
+    split: str,
+    limit: int,
+    expected_segment_k: int | None = None,
+    expected_segment_ks: list[int] | None = None,
+    expected_summary_horizon_k: int | None = None,
+) -> tuple[list[mod.MacroSegmentSample], dict[str, object], dict[str, object]]:
     payload = torch.load(cache_path, map_location="cpu", weights_only=False)
     signature = payload.get("signature")
     if not isinstance(signature, dict):
         raise ValueError("Dataset cache is missing signature metadata; refusing to run time alignment without segment_k validation")
-    cache_segment_k = signature.get("segment_k")
-    if cache_segment_k is None or int(cache_segment_k) != int(expected_segment_k):
+    if expected_segment_ks is None:
+        if expected_segment_k is None:
+            raise ValueError("expected_segment_k or expected_segment_ks is required")
+        expected_segment_ks = [int(expected_segment_k)]
+    expected_segment_ks = sorted({int(k) for k in expected_segment_ks})
+    cache_segment_ks = signature.get("segment_ks")
+    if cache_segment_ks is None:
+        cache_segment_k = signature.get("segment_k")
+        cache_segment_ks = [int(cache_segment_k)] if cache_segment_k is not None else []
+    cache_segment_ks = sorted({int(k) for k in cache_segment_ks})
+    if cache_segment_ks != expected_segment_ks:
         raise ValueError(
-            f"Dataset cache segment_k={cache_segment_k} does not match checkpoint segment_k={expected_segment_k}"
+            f"Dataset cache segment_ks={cache_segment_ks} does not match checkpoint segment_ks={expected_segment_ks}"
         )
+    if expected_summary_horizon_k is not None and signature.get("summary_horizon_k") is not None:
+        cache_summary_horizon_k = int(signature["summary_horizon_k"])
+        if cache_summary_horizon_k != int(expected_summary_horizon_k):
+            raise ValueError(
+                f"Dataset cache summary_horizon_k={cache_summary_horizon_k} does not match checkpoint summary_horizon_k={int(expected_summary_horizon_k)}"
+            )
     samples = [mod.MacroSegmentSample(**item) for item in payload[split]]
-    mismatched_sample = next((sample for sample in samples if int(sample.horizon_k) != int(expected_segment_k)), None)
+    expected_set = set(expected_segment_ks)
+    mismatched_sample = next((sample for sample in samples if int(sample.horizon_k) not in expected_set), None)
     if mismatched_sample is not None:
         raise ValueError(
-            f"Found sample with horizon_k={int(mismatched_sample.horizon_k)} in cache split {split}, expected {expected_segment_k}"
+            f"Found sample with horizon_k={int(mismatched_sample.horizon_k)} in cache split {split}, expected one of {expected_segment_ks}"
         )
     if limit > 0:
         samples = samples[:limit]
@@ -118,9 +156,17 @@ def main() -> None:
     ckpt = torch.load(checkpoint_path, map_location=args.device, weights_only=False)
     model = _build_model(ckpt, args.device)
     reward_scale = float(ckpt["args"].get("reward_scale", 1.0))
-    segment_k = int(ckpt["args"]["segment_k"])
+    reward_prediction_source = str(ckpt["args"].get("reward_prediction_source", "raw"))
+    segment_ks = _segment_ks_from_ckpt_args(ckpt["args"])
+    segment_k = int(segment_ks[0]) if len(segment_ks) == 1 else int(max(segment_ks))
 
-    samples, dataset_stats, cache_signature = _load_samples(cache_path, args.split, args.limit, segment_k)
+    samples, dataset_stats, cache_signature = _load_samples(
+        cache_path,
+        args.split,
+        args.limit,
+        expected_segment_ks=segment_ks,
+        expected_summary_horizon_k=_summary_horizon_k_from_ckpt_args(ckpt["args"]),
+    )
     loader = mod._build_loader(samples, batch_size=args.batch_size, shuffle=False)
 
     pred_reward_sum = []
@@ -131,6 +177,7 @@ def main() -> None:
     pred_realized_tau_log_sigma = []
     true_tau_exp = []
     true_tau_real = []
+    sample_horizon_ks = []
     sample_rows = []
     sample_index = 0
     realized_tau_source = "realized_duration_head" if getattr(model, "realized_tau_head_loaded", True) else "expected_duration_head_fallback"
@@ -177,9 +224,58 @@ def main() -> None:
                 current_types=tensors["current_types"],
                 candidate_mask=tensors["candidate_mask"],
             )
+            if reward_prediction_source == "projected":
+                projected_types, _projected_changed_mask, _transport_cost, _violation = mod.project_types_by_inventory(
+                    current_types=tensors["current_types"],
+                    change_logits=change_logits,
+                    type_logits=raw_type_logits,
+                    node_mask=tensors["candidate_mask"],
+                    positions=tensors["candidate_positions"],
+                    box_dims=tensors["box_dims"],
+                    horizon_k=tensors["horizon_k"],
+                    max_changed_sites=2 * tensors["horizon_k"],
+                )
+                _, projected_patch_latent = model.encode_patch(
+                    positions=tensors["candidate_positions"],
+                    nearest_vacancy_offset=tensors["nearest_vacancy_offset"],
+                    reach_depth=tensors["reach_depth"],
+                    is_start_vacancy=tensors["is_start_vacancy"],
+                    type_ids=projected_types,
+                    node_mask=tensors["candidate_mask"],
+                    global_summary=tensors["global_summary"],
+                    box_dims=tensors["box_dims"],
+                )
+                projected_change_logits, projected_type_logits = mod.projected_edit_logits_from_types(
+                    current_types=tensors["current_types"],
+                    projected_types=projected_types,
+                    candidate_mask=tensors["candidate_mask"],
+                )
+                projected_duration_outputs = mod._predict_reward_and_duration_outputs(
+                    model,
+                    global_latent,
+                    next_pred,
+                    path_latent,
+                    tensors["global_summary"],
+                    tensors["horizon_k"],
+                    patch_latent=projected_patch_latent,
+                    change_logits=projected_change_logits,
+                    type_logits=projected_type_logits,
+                    current_types=tensors["current_types"],
+                    candidate_mask=tensors["candidate_mask"],
+                )
+                duration_outputs["reward"] = projected_duration_outputs["reward"]
+                duration_outputs["gate_logit"] = projected_duration_outputs["gate_logit"]
             reward_hat = duration_outputs["reward"]
             tau_mu = duration_outputs["expected_tau_mu"]
             tau_log_sigma = duration_outputs["expected_tau_log_sigma"]
+            baseline_tau_mu = mod.macro_duration_baseline_log_tau(tensors["global_summary"], tensors["horizon_k"])
+            if args.duration_source == "baseline":
+                reported_tau_mu = baseline_tau_mu
+            elif args.duration_source == "blend":
+                alpha = float(np.clip(args.duration_blend_alpha, 0.0, 1.0))
+                reported_tau_mu = (1.0 - alpha) * baseline_tau_mu + alpha * tau_mu
+            else:
+                reported_tau_mu = tau_mu
             if realized_tau_source == "realized_duration_head":
                 realized_tau_mu = duration_outputs["realized_tau_mu"]
                 realized_tau_log_sigma = duration_outputs["realized_tau_log_sigma"]
@@ -191,17 +287,21 @@ def main() -> None:
             batch_pred_reward = gated_reward.detach().cpu().numpy()
             batch_pred_reward_raw = reward_hat.detach().cpu().numpy()
             batch_pred_reward_gate = torch.sigmoid(gate_logit).detach().cpu().numpy()
-            batch_pred_tau = torch.exp(tau_mu).detach().cpu().numpy()
+            batch_pred_tau = torch.exp(reported_tau_mu).detach().cpu().numpy()
+            batch_model_tau = torch.exp(tau_mu).detach().cpu().numpy()
+            batch_baseline_tau = torch.exp(baseline_tau_mu).detach().cpu().numpy()
             batch_pred_realized_tau = torch.exp(realized_tau_mu).detach().cpu().numpy()
             batch_pred_realized_tau_mu = realized_tau_mu.detach().cpu().numpy()
             batch_pred_realized_tau_log_sigma = realized_tau_log_sigma.detach().cpu().numpy()
 
-            for sample, item_pred_reward, item_pred_reward_raw, item_pred_reward_gate, item_pred_tau, item_pred_realized_tau, item_pred_realized_tau_mu, item_pred_realized_tau_log_sigma in zip(
+            for sample, item_pred_reward, item_pred_reward_raw, item_pred_reward_gate, item_pred_tau, item_model_tau, item_baseline_tau, item_pred_realized_tau, item_pred_realized_tau_mu, item_pred_realized_tau_log_sigma in zip(
                 batch,
                 batch_pred_reward,
                 batch_pred_reward_raw,
                 batch_pred_reward_gate,
                 batch_pred_tau,
+                batch_model_tau,
+                batch_baseline_tau,
                 batch_pred_realized_tau,
                 batch_pred_realized_tau_mu,
                 batch_pred_realized_tau_log_sigma,
@@ -214,6 +314,7 @@ def main() -> None:
                 pred_realized_tau_log_sigma.append(float(item_pred_realized_tau_log_sigma))
                 true_tau_exp.append(float(sample.tau_exp))
                 true_tau_real.append(float(sample.tau_real))
+                sample_horizon_ks.append(int(sample.horizon_k))
                 sample_rows.append(
                     {
                         "index": sample_index,
@@ -228,6 +329,8 @@ def main() -> None:
                         "predicted_delta_e": float(item_pred_reward / reward_scale),
                         "predicted_tau": float(item_pred_tau),
                         "predicted_expected_tau": float(item_pred_tau),
+                        "model_expected_tau": float(item_model_tau),
+                        "baseline_expected_tau": float(item_baseline_tau),
                         "predicted_realized_tau": float(item_pred_realized_tau),
                         "predicted_realized_tau_log_mu": float(item_pred_realized_tau_mu),
                         "predicted_realized_tau_log_sigma": float(item_pred_realized_tau_log_sigma),
@@ -252,6 +355,7 @@ def main() -> None:
     )
     true_tau_exp_np = np.asarray(true_tau_exp, dtype=np.float64)
     true_tau_real_np = np.asarray(true_tau_real, dtype=np.float64)
+    sample_horizon_ks_np = np.asarray(sample_horizon_ks, dtype=np.int64)
 
     if realized_tau_source == "realized_duration_head":
         realized_distribution_summary = {
@@ -273,12 +377,36 @@ def main() -> None:
             "reason": "checkpoint_missing_realized_duration_head",
         }
 
+    by_k = {}
+    for horizon_k in sorted(set(sample_horizon_ks)):
+        mask = sample_horizon_ks_np == int(horizon_k)
+        by_k[str(int(horizon_k))] = {
+            "num_samples": int(mask.sum()),
+            "reward_sum": _compute_metrics(pred_reward_sum_np[mask], true_reward_sum_np[mask]),
+            "reward_diagnostics": mod._compute_reward_diagnostics(pred_reward_sum_np[mask], true_reward_sum_np[mask]),
+            "delta_e": _compute_metrics(pred_delta_e_np[mask], true_delta_e_np[mask]),
+            "tau_expected": {
+                **_compute_metrics(pred_tau_np[mask], true_tau_exp_np[mask]),
+                **_compute_log_metrics(pred_tau_np[mask], true_tau_exp_np[mask]),
+                "traditional_mean": float(np.mean(true_tau_exp_np[mask])),
+                "predicted_mean": float(np.mean(pred_tau_np[mask])),
+            },
+            "tau_realized": {
+                **_compute_metrics(pred_realized_tau_np[mask], true_tau_real_np[mask]),
+                **_compute_log_metrics(pred_realized_tau_np[mask], true_tau_real_np[mask]),
+                "traditional_mean": float(np.mean(true_tau_real_np[mask])),
+                "predicted_median": float(np.mean(pred_realized_tau_np[mask])),
+            },
+        }
+
     summary = {
         "checkpoint": str(checkpoint_path),
         "cache": str(cache_path),
         "split": args.split,
         "num_samples": int(len(samples)),
         "segment_k": segment_k,
+        "segment_ks": segment_ks,
+        "reward_prediction_source": reward_prediction_source,
         "cache_signature": cache_signature,
         "dataset_stats": dataset_stats.get(args.split, {}),
         "teacher_source": "traditional_kmc_segment_cache",
@@ -286,6 +414,8 @@ def main() -> None:
             "expected_tau_head": True,
             "realized_tau_head_loaded": bool(getattr(model, "realized_tau_head_loaded", True)),
             "realized_tau_source": realized_tau_source,
+            "duration_source": args.duration_source,
+            "duration_blend_alpha": float(args.duration_blend_alpha),
         },
         "reward_sum": _compute_metrics(pred_reward_sum_np, true_reward_sum_np),
         "reward_diagnostics": mod._compute_reward_diagnostics(pred_reward_sum_np, true_reward_sum_np),
@@ -313,6 +443,7 @@ def main() -> None:
             "reward_sum_mean": float(np.mean(pred_reward_sum_np)),
             "delta_e_mean": float(np.mean(pred_delta_e_np)),
         },
+        "by_k": by_k,
         "sample_preview": sample_rows[: max(args.print_samples, 0)],
     }
     if args.save_all_samples:
@@ -320,7 +451,7 @@ def main() -> None:
 
     print("=" * 60)
     print("Macro-Edit Dreamer vs Traditional KMC Teacher")
-    print(f"samples={len(samples)}, split={args.split}, segment_k={segment_k}")
+    print(f"samples={len(samples)}, split={args.split}, segment_ks={segment_ks}")
     print("=" * 60)
     print(
         "Traditional KMC energy/time means: "

@@ -15,6 +15,7 @@ PPO_LABEL="SwarmThinkers PPO"
 PPO_EVAL="${ROOT_DIR}/results/ppo_v9_results/ppo_macro_eval_val.json"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 LONG_ROLLOUT_SEGMENTS=500
+MAX_EPISODE_STEPS_OVERRIDE=""
 
 usage() {
   cat <<'EOF'
@@ -32,6 +33,8 @@ Options:
   --ppo-label <name>            PPO label, default: SwarmThinkers PPO
   --ppo-eval <path>             PPO paired eval json
   --long-rollout-segments <n>   Number of contiguous teacher-forced segments for final long eval, default: 500
+  --max-episode-steps-override <n>
+                                 Override teacher env max_episode_steps for final long eval
 EOF
 }
 
@@ -79,6 +82,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --long-rollout-segments)
       LONG_ROLLOUT_SEGMENTS="$2"
+      shift 2
+      ;;
+    --max-episode-steps-override)
+      MAX_EPISODE_STEPS_OVERRIDE="$2"
       shift 2
       ;;
     -h|--help)
@@ -152,11 +159,17 @@ run_final_eval() {
     --comparison-time-output "$time_fig" \
     --realized-output "$realized_fig"
 
-  "${PYTHON_BIN}" "${ROOT_DIR}/dreamer4-main/eval_macro_long_trajectory.py" \
-    --checkpoint "$checkpoint_path" \
-    --device "$DEVICE" \
-    --rollout_segments "$LONG_ROLLOUT_SEGMENTS" \
+  local long_cmd=(
+    "${PYTHON_BIN}" "${ROOT_DIR}/dreamer4-main/eval_macro_long_trajectory.py"
+    --checkpoint "$checkpoint_path"
+    --device "$DEVICE"
+    --rollout_segments "$LONG_ROLLOUT_SEGMENTS"
     --output "$long_json"
+  )
+  if [[ -n "$MAX_EPISODE_STEPS_OVERRIDE" ]]; then
+    long_cmd+=(--max_episode_steps_override "$MAX_EPISODE_STEPS_OVERRIDE")
+  fi
+  "${long_cmd[@]}"
 
   touch "$FINAL_STATE"
   echo "[watch] final evaluations completed"
