@@ -1,0 +1,2 @@
+requested_device,resolved_device,backend,local_rank,status
+cpu,cpu,cpu,,active

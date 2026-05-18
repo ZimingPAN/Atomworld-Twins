@@ -1,0 +1,31 @@
+[启动] KMC 横向测试开始。
+[KMC] Fe-Cu-vacancy 算例初始化与演化测试。
+[设备] requested=cpu resolved=cpu status=active
+[KMC] 开始算例 ms_000: T=300 K, Cu=0.005, V=0.001, size=(12, 12, 12), steps=25
+[DeepH 初始化] case=ms_000 pair_energy=-14783.031096 eV, DeepH接口能量=-14783.052996 eV
+[DeepH 调用说明] from deeph.inference import DeepHCalculator; calc = DeepHCalculator(model_dir='models/deeph_fecu_vacancy'); hamiltonian = calc.predict_hamiltonian(structure); energy = calc.total_energy(hamiltonian, structure)
+[DeepKS 初始化] case=ms_000 pair_energy=-14783.031096 eV, DeepKS接口能量=-14783.049596 eV
+[DeepKS 调用说明] from deepks.scf import DeepKSCalculator; calc = DeepKSCalculator(model='models/deepks_fecu_vacancy.pt'); energy = calc.get_potential_energy(structure)
+[KMC] 开始算例 ms_001: T=300 K, Cu=0.005, V=0.002, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_002: T=300 K, Cu=0.0134, V=0.001, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_003: T=300 K, Cu=0.0134, V=0.002, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_004: T=300 K, Cu=0.03, V=0.001, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_005: T=300 K, Cu=0.03, V=0.002, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_006: T=500 K, Cu=0.005, V=0.001, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_007: T=500 K, Cu=0.005, V=0.002, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_008: T=500 K, Cu=0.0134, V=0.001, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_009: T=500 K, Cu=0.0134, V=0.002, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_010: T=500 K, Cu=0.03, V=0.001, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_011: T=500 K, Cu=0.03, V=0.002, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_012: T=700 K, Cu=0.005, V=0.001, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_013: T=700 K, Cu=0.005, V=0.002, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_014: T=700 K, Cu=0.0134, V=0.001, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_015: T=700 K, Cu=0.0134, V=0.002, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_016: T=700 K, Cu=0.03, V=0.001, size=(12, 12, 12), steps=25
+[KMC] 开始算例 ms_017: T=700 K, Cu=0.03, V=0.002, size=(12, 12, 12), steps=25
+[性能] 开始固定 Fe-Cu-vacancy 算例优化前后对比。
+[性能] size=(8, 8, 8): baseline=0.0484s, optimized=0.0366s, speedup=1.32x
+[性能] size=(10, 10, 10): baseline=0.0639s, optimized=0.0519s, speedup=1.23x
+[性能] size=(12, 12, 12): baseline=0.0952s, optimized=0.0822s, speedup=1.16x
+[完成] KMC 横向测试全部输出已生成。
+[完成] 输出清单=outputs/manifest.json

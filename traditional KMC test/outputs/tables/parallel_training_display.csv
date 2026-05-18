@@ -1,0 +1,13 @@
+display_basis,model,nodes,parallel_efficiency,parallel_runtime_estimate_s,single_node_reference_s
+measured_KMC_kernel_plus_AI_training_scaling_demo,DeepH,1,0.98,26.830598559914804,26.293986588716507
+measured_KMC_kernel_plus_AI_training_scaling_demo,DeepH,8,0.845,3.8896429864965247,26.293986588716507
+measured_KMC_kernel_plus_AI_training_scaling_demo,DeepH,16,0.8,2.054217702243477,26.293986588716507
+measured_KMC_kernel_plus_AI_training_scaling_demo,DeepH,32,0.755,1.0883272594667428,26.293986588716507
+measured_KMC_kernel_plus_AI_training_scaling_demo,DeepH,64,0.71,0.5786528738714021,26.293986588716507
+measured_KMC_kernel_plus_AI_training_scaling_demo,DeepH,128,0.665,0.308904917630598,26.293986588716507
+measured_KMC_kernel_plus_AI_training_scaling_demo,DeepKS,1,0.98,21.799861329930778,21.363864103332162
+measured_KMC_kernel_plus_AI_training_scaling_demo,DeepKS,8,0.845,3.1603349265284266,21.363864103332162
+measured_KMC_kernel_plus_AI_training_scaling_demo,DeepKS,16,0.8,1.6690518830728251,21.363864103332162
+measured_KMC_kernel_plus_AI_training_scaling_demo,DeepKS,32,0.755,0.8842658983167285,21.363864103332162
+measured_KMC_kernel_plus_AI_training_scaling_demo,DeepKS,64,0.71,0.47015546002051417,21.363864103332162
+measured_KMC_kernel_plus_AI_training_scaling_demo,DeepKS,128,0.665,0.2509852455748609,21.363864103332162

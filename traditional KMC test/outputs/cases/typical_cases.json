@@ -1,0 +1,67 @@
+[
+  {
+    "case_id": "case_00_fe_matrix",
+    "system_type": "Fe matrix",
+    "lattice_size": [
+      12,
+      12,
+      12
+    ],
+    "temperature_K": 300,
+    "cu_density": 0.0,
+    "v_density": 0.0,
+    "purpose": "Fe 基体能量与结构基准，不做 vacancy-hop 演化。"
+  },
+  {
+    "case_id": "case_01_fe_cu_solute",
+    "system_type": "Fe-Cu solute",
+    "lattice_size": [
+      12,
+      12,
+      12
+    ],
+    "temperature_K": 300,
+    "cu_density": 0.0134,
+    "v_density": 0.0,
+    "purpose": "Fe-Cu 溶质体系构型与 DeepH/DeepKS 能量接口展示。"
+  },
+  {
+    "case_id": "case_02_fe_vacancy",
+    "system_type": "Fe-vacancy defect",
+    "lattice_size": [
+      12,
+      12,
+      12
+    ],
+    "temperature_K": 300,
+    "cu_density": 0.0,
+    "v_density": 0.001,
+    "purpose": "Fe-vacancy 缺陷体系 vacancy-hop KMC 基准。"
+  },
+  {
+    "case_id": "case_03_fe_cu_vacancy",
+    "system_type": "Fe-Cu-vacancy",
+    "lattice_size": [
+      12,
+      12,
+      12
+    ],
+    "temperature_K": 300,
+    "cu_density": 0.0134,
+    "v_density": 0.001,
+    "purpose": "主测试体系，连接能量、扩散率、跨尺度演化与性能记录。"
+  },
+  {
+    "case_id": "case_04_fe_cu_cluster",
+    "system_type": "Fe-Cu cluster evolution",
+    "lattice_size": [
+      12,
+      12,
+      12
+    ],
+    "temperature_K": 500,
+    "cu_density": 0.03,
+    "v_density": 0.001,
+    "purpose": "Cu 团簇组织演化与材料设计建议展示。"
+  }
+]
