@@ -1,7 +1,7 @@
 stage,test_content,acceptance_indicator,generated_artifacts,status
 1,Fe-Cu-vacancy 基础算例适配与能量计算流程,完成多散射/DeepH 能量接口适配,outputs/cases/typical_cases.json; outputs/tables/energy_results.csv,completed
 2,固定 Fe-Cu-vacancy 算例性能测试与 DeepH/DeepKS 调用记录,性能对比表、模型调用记录,outputs/tables/performance_records.csv; outputs/tables/module_timing_breakdown.csv; outputs/tables/model_call_records.csv,completed
-3,不同温度、成分、缺陷条件下跨尺度演化计算,跨尺度数据集、演化曲线、百节点并行展示,outputs/datasets/multiscale_dataset.csv; outputs/figures/material_evolution_curves.png; outputs/tables/parallel_training_display.csv,completed
+3,不同温度、成分、缺陷条件下跨尺度演化计算,跨尺度数据集、演化曲线、百节点并行扩展性记录,outputs/datasets/multiscale_dataset.csv; outputs/figures/material_evolution_curves.png; outputs/tables/parallel_training_display.csv,completed
 4,优化前后运行时间和并行效率统计,效率对比表、运行时间曲线,outputs/tables/efficiency_comparison.csv; outputs/figures/runtime_comparison.png,completed
 5,按成分、温度和缺陷条件给出设计优化建议,成分-组织趋势表、材料设计建议,outputs/tables/composition_structure_trends.csv; outputs/reports/material_design_recommendations.md,completed
 6,汇总全部测试结果形成验收报告,验收报告、测试数据、结果图表,outputs/reports/acceptance_report.md; outputs/reports/acceptance_report.docx; outputs/manifest.json,completed

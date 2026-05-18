@@ -1,5 +1,4 @@
 {
-  "generated_at": "2026-05-18 11:11:59",
   "files": [
     {
       "path": "outputs/cases/typical_cases.json",
@@ -23,11 +22,11 @@
     },
     {
       "path": "outputs/figures/material_evolution_curves.png",
-      "bytes": 173755
+      "bytes": 173192
     },
     {
       "path": "outputs/figures/runtime_comparison.png",
-      "bytes": 44368
+      "bytes": 45509
     },
     {
       "path": "outputs/logs/model_call_log.txt",
@@ -35,31 +34,31 @@
     },
     {
       "path": "outputs/reports/acceptance_report.docx",
-      "bytes": 12014
+      "bytes": 12003
     },
     {
       "path": "outputs/reports/acceptance_report.md",
-      "bytes": 3154
+      "bytes": 3163
     },
     {
       "path": "outputs/reports/kmc_test_document.docx",
-      "bytes": 452832
+      "bytes": 453931
     },
     {
       "path": "outputs/reports/kmc_test_document.md",
-      "bytes": 1417
+      "bytes": 5408
     },
     {
       "path": "outputs/reports/material_design_recommendations.md",
-      "bytes": 1355
+      "bytes": 1337
     },
     {
       "path": "outputs/reports/output_audit_against_test_plan.md",
-      "bytes": 5711
+      "bytes": 6026
     },
     {
       "path": "outputs/reports/software_adaptation_and_performance.md",
-      "bytes": 1193
+      "bytes": 1190
     },
     {
       "path": "outputs/tables/composition_structure_trends.csv",
@@ -83,11 +82,11 @@
     },
     {
       "path": "outputs/tables/module_timing_breakdown.csv",
-      "bytes": 2398
+      "bytes": 2405
     },
     {
       "path": "outputs/tables/parallel_training_display.csv",
-      "bytes": 1342
+      "bytes": 1339
     },
     {
       "path": "outputs/tables/performance_records.csv",
@@ -95,7 +94,7 @@
     },
     {
       "path": "outputs/tables/stage_completion_matrix.csv",
-      "bytes": 1341
+      "bytes": 1350
     }
   ]
 }

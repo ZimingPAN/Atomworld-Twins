@@ -1,12 +1,14 @@
 # KMC Acceptance Test
 
-Run the KMC acceptance workflow with:
+This folder contains an isolated KMC acceptance workflow, generated results, and the report files needed for review.
+
+## Run
 
 ```bash
 python run_kmc_acceptance.py
 ```
 
-All generated files are written under `outputs/`.
+All generated files are written under `outputs/`. The script recreates that folder on each run.
 
 Device selection uses one interface:
 
@@ -14,14 +16,32 @@ Device selection uses one interface:
 python run_kmc_acceptance.py --device cpu
 python run_kmc_acceptance.py --device cuda:localrank
 python run_kmc_acceptance.py --device sdaa:localrank
+python run_kmc_acceptance.py --device cuda:0 --local-rank 0
 python run_kmc_acceptance.py --device cuda:localrank --strict-device
 ```
 
-`--strict-device` stops the run if the requested accelerator is unavailable; without it the workflow records the fallback status in `outputs/tables/device_config.csv`.
+- `--device` accepts `cpu`, `auto`, `cuda:N`, `cuda:localrank`, `sdaa:N`, and `sdaa:localrank`.
+- `--local-rank` overrides rank discovery for `*:localrank`.
+- `KMC_DEVICE` can provide the default device request when `--device` is omitted.
+- `--strict-device` stops the run if the requested accelerator is unavailable.
+- Without `--strict-device`, the workflow records fallback status in `outputs/tables/device_config.csv`.
 
-设备通过同一个入口传入。`--strict-device` 会在请求的加速设备不可用时直接停止；不加该参数时，脚本会自动回退并把状态写入 `outputs/tables/device_config.csv`。
+设备通过同一个入口传入。`--local-rank` 可覆盖 `*:localrank` 的本地序号，`KMC_DEVICE` 可作为默认设备请求。`--strict-device` 会在请求的加速设备不可用时直接停止；不加该参数时，脚本会自动回退并把状态写入 `outputs/tables/device_config.csv`。
 
-Main generated artifacts:
+## Build Test Document
+
+After running the workflow, rebuild the summary document:
+
+```bash
+python build_kmc_test_document.py
+```
+
+This writes:
+
+- `outputs/reports/kmc_test_document.docx`
+- `outputs/reports/kmc_test_document.md`
+
+## Selected Generated Artifacts
 
 - `outputs/cases/typical_cases.json`
 - `outputs/tables/energy_results.csv`
@@ -30,11 +50,32 @@ Main generated artifacts:
 - `outputs/tables/module_timing_breakdown.csv`
 - `outputs/tables/model_call_records.csv`
 - `outputs/tables/stage_completion_matrix.csv`
+- `outputs/tables/parallel_training_display.csv`
 - `outputs/datasets/multiscale_dataset.csv`
+- `outputs/datasets/kmc_snapshots.csv`
 - `outputs/figures/material_evolution_curves.png`
 - `outputs/figures/cu_cluster_structure.png`
+- `outputs/figures/runtime_comparison.png`
 - `outputs/tables/efficiency_comparison.csv`
 - `outputs/reports/material_design_recommendations.md`
 - `outputs/reports/output_audit_against_test_plan.md`
 - `outputs/reports/acceptance_report.md`
 - `outputs/reports/acceptance_report.docx`
+- `outputs/reports/kmc_test_document.docx`
+- `outputs/manifest.json`
+
+`outputs/manifest.json` records generated files except itself.
+
+## Verification
+
+```bash
+python -m py_compile run_kmc_acceptance.py build_kmc_test_document.py
+python run_kmc_acceptance.py --device cpu
+python build_kmc_test_document.py
+```
+
+For DOCX layout review, render the document with LibreOffice or an equivalent DOCX renderer and inspect every page image.
+
+## 中文说明
+
+本文件夹包含 KMC 验收测试脚本、输出数据、图表和测试文档。核心流程是先运行 `run_kmc_acceptance.py` 生成 `outputs/`，再运行 `build_kmc_test_document.py` 生成汇报用测试文档。设备统一通过 `--device` 传入，支持 `cpu`、`cuda:localrank` 和 `sdaa:localrank` 等形式；设备解析结果会写入 `outputs/tables/device_config.csv`。

@@ -2,14 +2,14 @@
 
 ## 1. 测试目标
 
-本测试围绕 Fe-Cu-vacancy 合金体系，使用 KMC 展示材料能量计算、跨尺度数据生成、性能记录、并行训练展示和材料设计建议流程。
+本测试围绕 Fe-Cu-vacancy 合金体系，使用 KMC 展示材料能量计算、跨尺度数据生成、性能记录、并行扩展性记录和材料设计建议流程。
 
 ## 2. 软件适配结果
 
 - KMC 后端位置：`kmc_backend/RL4KMC/`
 - 主执行脚本：`run_kmc_acceptance.py`
 - 设备接口：`--device`，本次 resolved device 为 `cpu`，状态 `active`
-- DeepH / DeepKS：使用验收能量接口，在初始化日志中打印接口能量和真实库调用方式。
+- DeepH / DeepKS：使用能量接口，在初始化日志中打印接口能量和库调用方式。
 - Fe-Cu-vacancy 主算例数量：18
 
 ## 3. 能量与跨尺度数据
@@ -26,13 +26,13 @@
 - 主要耗时模块拆分：`outputs/tables/module_timing_breakdown.csv`
 - 计算效率对比表：`outputs/tables/efficiency_comparison.csv`
 - 运行时间曲线：`outputs/figures/runtime_comparison.png`
-- DeepH / DeepKS 百节点并行训练展示表：`outputs/tables/parallel_training_display.csv`
+- DeepH / DeepKS 百节点并行扩展性记录表：`outputs/tables/parallel_training_display.csv`
 - DeepH / DeepKS 模型调用 CSV 记录：`outputs/tables/model_call_records.csv`
 - 阶段完成矩阵：`outputs/tables/stage_completion_matrix.csv`
 - 设备配置记录：`outputs/tables/device_config.csv`
 - 逐句核对与输出合理性检查：`outputs/reports/output_audit_against_test_plan.md`
-- 本次展示最大节点数：128
-- KMC 增量速率更新相对全量重算的最大测得 speedup：1.325x
+- 本次扩展性记录最大节点数：128
+- KMC 增量速率更新相对全量重算的最大测得 speedup：1.322x
 
 ## 5. 材料设计建议
 
@@ -54,8 +54,8 @@
 
 ## 7. 结论
 
-测试脚本已完成 KMC 横向验收展示链路：Fe-Cu-vacancy 算例可运行，能量表、跨尺度演化数据、性能对比、百节点并行展示、组织结构图和设计建议均已生成。DeepH / DeepKS 当前按要求保留能量接口调用入口，后续若接入真实运行环境，可直接绑定对应库的能量计算函数。
+测试脚本已完成 KMC 横向验收链路：Fe-Cu-vacancy 算例可运行，能量表、跨尺度演化数据、性能对比、百节点并行扩展性记录、组织结构图和设计建议均已生成。DeepH / DeepKS 当前按要求保留能量接口调用入口，可直接绑定对应库的能量计算函数。
 
 ## 8. 输出清单
 
-完整输出清单见 `outputs/manifest.json`。
+输出清单见 `outputs/manifest.json`，该清单记录除自身外的生成文件。

@@ -3,11 +3,9 @@ from __future__ import annotations
 
 import csv
 import json
-from datetime import date
 from pathlib import Path
 
 from docx import Document
-from docx.enum.section import WD_SECTION
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
@@ -28,11 +26,57 @@ BLUE = RGBColor(47, 93, 151)
 DARK = RGBColor(31, 45, 61)
 MUTED = RGBColor(91, 103, 120)
 LIGHT_FILL = "EEF3F8"
+RUN_DATE = "2026-05-18"
+STATUS_LABELS = {"completed": "完成", "active": "启用"}
 
 
 def read_csv(name: str) -> list[dict[str, str]]:
     with (TABLES / name).open(newline="", encoding="utf-8") as fh:
         return list(csv.DictReader(fh))
+
+
+def status_label(value: str) -> str:
+    return STATUS_LABELS.get(str(value), str(value))
+
+
+def fmt_temp(value: str) -> str:
+    return f"{float(value):.0f} K"
+
+
+def short_artifacts(value: str) -> str:
+    parts = [part.strip() for part in str(value).split(";") if part.strip()]
+    return "; ".join(Path(part).name for part in parts)
+
+
+def manifest_entries(extra_paths: list[Path] | None = None) -> list[dict[str, object]]:
+    skip_dir_suffixes = ("_render", "render_check", "quicklook_check")
+    paths = set()
+    for path in OUTPUTS.rglob("*"):
+        if not path.is_file() or path.name == "manifest.json":
+            continue
+        if any(part.endswith(skip_dir_suffixes) for part in path.parts):
+            continue
+        paths.add(path.resolve())
+    for path in extra_paths or []:
+        paths.add(path.resolve())
+    entries = []
+    for resolved in sorted(paths, key=lambda p: str(p.relative_to(ROOT))):
+        entries.append(
+            {
+                "path": str(resolved.relative_to(ROOT)),
+                "bytes": resolved.stat().st_size if resolved.exists() else 0,
+            }
+        )
+    return entries
+
+
+def refresh_manifest() -> int:
+    entries = manifest_entries([DOCX_OUT, MD_OUT])
+    (OUTPUTS / "manifest.json").write_text(
+        json.dumps({"files": entries}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return len(entries)
 
 
 def set_run_font(run, size: float | None = None, bold: bool | None = None, color: RGBColor | None = None) -> None:
@@ -172,16 +216,13 @@ def make_summary() -> dict[str, object]:
     best_energy = min(trend_rows, key=lambda r: float(r["final_pair_energy_per_site_eV"]))
     best_cluster = max(trend_rows, key=lambda r: int(r["final_cu_cluster_max"]))
 
-    with (OUTPUTS / "manifest.json").open(encoding="utf-8") as fh:
-        manifest = json.load(fh)
-
     return {
         "energy_rows": energy_rows,
         "perf_rows": perf_rows,
         "parallel_rows": parallel_rows,
         "device": device_rows[0],
         "stage_rows": stage_rows,
-        "manifest_count": len(manifest["files"]),
+        "manifest_count": len(manifest_entries([DOCX_OUT, MD_OUT])),
         "speedups": speedups,
         "energy_range": (min(final_energies), max(final_energies)),
         "cluster_range": (min(cluster_sizes), max(cluster_sizes)),
@@ -198,39 +239,93 @@ def build_markdown(summary: dict[str, object]) -> None:
     speedups = ", ".join(f"{v:.3f}x" for v in summary["speedups"])
     energy_min, energy_max = summary["energy_range"]
     cluster_min, cluster_max = summary["cluster_range"]
+    stage_lines = "\n".join(
+        f"| {r['stage']} | {r['test_content']} | {r['generated_artifacts']} | {status_label(r['status'])} |"
+        for r in summary["stage_rows"]
+    )
     text = f"""# 强关联材料多尺度计算 KMC 测试文档
 
-## 测试概述
+Fe-Cu-vacancy 合金体系测试 | 结果整理版 | {RUN_DATE}
 
-本测试围绕 Fe-Cu-vacancy 合金体系，验证 KMC 在材料能量计算、跨尺度数据生成、并行训练展示、组织结构分析和材料设计建议方面的完整流程。
+## 1. 测试依据与目标
 
-## 关键结果
+本测试以 Fe-Cu-vacancy 合金体系为样例，围绕材料能量计算、跨尺度数据生成、并行扩展性记录、材料演化分析和材料设计建议形成完整测试闭环。
 
-- 测试体系：Fe 基体、Fe-Cu 溶质体系、Fe-vacancy 缺陷体系、Fe-Cu-vacancy 复合体系、Fe-Cu 团簇演化体系。
-- 跨尺度组合：18 个温度、Cu 含量和 vacancy 含量组合。
-- 逐步记录：450 条 KMC 演化记录。
-- 设备接口：requested={device['requested_device']}, resolved={device['resolved_device']}, status={device['status']}。
-- 优化前后 speedup：{speedups}。
-- 能量范围：{energy_min:.6f} 到 {energy_max:.6f} eV。
-- Cu 最大团簇范围：{cluster_min} 到 {cluster_max}。
-- DeepH / DeepKS 并行训练展示最大节点数：{summary['max_nodes']}。
+- 验证 Fe-Cu-vacancy 典型算例可以完成 KMC 初始化、能量计算、扩散率计算和逐步演化。
+- 验证 DeepH / DeepKS 能量接口在初始化阶段输出接口能量，并保留库调用路径。
+- 验证不同温度、不同 Cu 含量和不同 vacancy 含量条件下的跨尺度数据生成与组织结构分析。
+- 验证优化前后运行时间、主要耗时模块、并行扩展性记录和材料设计建议均有可追溯输出。
 
-## 材料设计结论
+## 2. 测试体系
 
-- 单位位点能量最低组合：{best_energy['case_id']}，T={best_energy['temperature_K']} K, Cu={best_energy['cu_density']}, V={best_energy['v_density']}。
-- Cu 团簇最大组合：{best_cluster['case_id']}，T={best_cluster['temperature_K']} K, Cu={best_cluster['cu_density']}, V={best_cluster['v_density']}, max_cluster={best_cluster['final_cu_cluster_max']}。
+| 体系 | 测试目的 | 输出证据 |
+| --- | --- | --- |
+| Fe 基体 | 建立能量与结构基准 | `outputs/cases/typical_cases.json` |
+| Fe-Cu 溶质体系 | 检查 Cu 溶质构型与能量接口 | `outputs/tables/energy_results.csv` |
+| Fe-vacancy 缺陷体系 | 检查 vacancy-hop KMC 演化 | `outputs/datasets/multiscale_dataset.csv` |
+| Fe-Cu-vacancy 复合体系 | 连接能量、扩散率、性能和跨尺度数据 | `outputs/tables/energy_results.csv`; `outputs/tables/performance_records.csv` |
+| Fe-Cu 团簇演化体系 | 展示 Cu 团簇组织结构变化 | `outputs/figures/cu_cluster_structure.png` |
 
-## 主要输出
+## 3. 测试配置与设备接口
 
-1. `outputs/cases/typical_cases.json`
-2. `outputs/tables/energy_results.csv`
-3. `outputs/reports/software_adaptation_and_performance.md`
-4. `outputs/datasets/multiscale_dataset.csv`
-5. `outputs/figures/material_evolution_curves.png`
-6. `outputs/figures/cu_cluster_structure.png`
-7. `outputs/tables/efficiency_comparison.csv`
-8. `outputs/reports/material_design_recommendations.md`
-9. `outputs/reports/acceptance_report.docx`
+本次运行设备配置为 requested={device['requested_device']}，resolved={device['resolved_device']}，backend={device['backend']}，status={device['status']}。脚本统一通过 `--device` 传入计算设备，并支持 `cpu`、`cuda:localrank` 和 `sdaa:localrank`。
+
+| 配置项 | 取值 |
+| --- | --- |
+| 主执行脚本 | `run_kmc_acceptance.py` |
+| 设备入口 | `--device` |
+| 严格设备模式 | `--strict-device` |
+| DeepH 调用路径 | `DeepHCalculator -> predict_hamiltonian -> total_energy` |
+| DeepKS 调用路径 | `DeepKSCalculator -> get_potential_energy` |
+| 输出根目录 | `outputs/` |
+
+## 4. 分阶段测试完成情况
+
+| 阶段 | 测试内容 | 成果形式 | 状态 |
+| --- | --- | --- | --- |
+{stage_lines}
+
+## 5. 关键结果
+
+| 结果项 | 数值或结论 |
+| --- | --- |
+| 跨尺度组合数量 | 18 |
+| 逐步 KMC 记录 | 450 |
+| 能量结果行数 | {len(summary['energy_rows'])} |
+| 最终 pair energy 范围 | {energy_min:.6f} 到 {energy_max:.6f} eV |
+| Cu 最大团簇范围 | {cluster_min} 到 {cluster_max} |
+| 三种规模 speedup | {speedups} |
+| DeepH / DeepKS 并行扩展性记录 | 覆盖 1 到 {summary['max_nodes']} 节点 |
+| 输出清单记录文件数 | {summary['manifest_count']}（不含 manifest 自身） |
+
+## 6. 图形结果
+
+- 图 1：`outputs/figures/material_evolution_curves.png`，展示材料能量变化与 Cu 团簇演化曲线。
+- 图 2：`outputs/figures/cu_cluster_structure.png`，展示 Cu 团簇组织结构图。
+- 图 3：`outputs/figures/runtime_comparison.png`，展示优化前后运行时间对比。
+
+## 7. 材料设计建议
+
+- 单位位点能量最低组合为 `{best_energy['case_id']}`：T={fmt_temp(best_energy['temperature_K'])}，Cu={best_energy['cu_density']}，V={best_energy['v_density']}。
+- Cu 团簇最大组合为 `{best_cluster['case_id']}`：T={fmt_temp(best_cluster['temperature_K'])}，Cu={best_cluster['cu_density']}，V={best_cluster['v_density']}，max_cluster={best_cluster['final_cu_cluster_max']}。
+- 若目标是降低能量并保持均匀固溶，建议优先采用 Fe-rich、低到中等 Cu 配方，并控制 vacancy density。
+- 若目标是展示 Cu-rich clustering 或析出趋势，建议提高 Cu density，并在中高温条件下延长 KMC 演化步数。
+
+## 8. 输出文件索引与结论
+
+本测试已形成 Fe-Cu-vacancy 体系从典型算例、能量计算、跨尺度演化、性能对比、并行扩展性记录到材料设计建议的完整 KMC 测试链路，输出覆盖方案要求的主要结果，可用于验收汇报和后续复核。
+
+| 文档要求 | 对应输出 |
+| --- | --- |
+| Fe-Cu-vacancy 典型测试算例 | `outputs/cases/typical_cases.json` |
+| 能量计算结果表 | `outputs/tables/energy_results.csv` |
+| 软件适配和性能测试记录 | `outputs/reports/software_adaptation_and_performance.md` |
+| 跨尺度数据集 | `outputs/datasets/multiscale_dataset.csv` |
+| 材料演化曲线 | `outputs/figures/material_evolution_curves.png` |
+| Cu 团簇组织结构图 | `outputs/figures/cu_cluster_structure.png` |
+| 计算效率对比表 | `outputs/tables/efficiency_comparison.csv` |
+| 材料设计优化建议 | `outputs/reports/material_design_recommendations.md` |
+| 项目验收报告 | `outputs/reports/acceptance_report.docx` |
 """
     MD_OUT.write_text(text, encoding="utf-8")
 
@@ -260,7 +355,7 @@ def build_docx(summary: dict[str, object]) -> None:
 
     subtitle = doc.add_paragraph()
     subtitle.paragraph_format.space_after = Pt(12)
-    run = subtitle.add_run("Fe-Cu-vacancy 合金体系测试 | 结果整理版 | 2026-05-18")
+    run = subtitle.add_run(f"Fe-Cu-vacancy 合金体系测试 | 结果整理版 | {RUN_DATE}")
     set_run_font(run, size=10.5, color=MUTED)
 
     device = summary["device"]
@@ -272,7 +367,7 @@ def build_docx(summary: dict[str, object]) -> None:
         [
             ("跨尺度组合", "18"),
             ("逐步记录", "450"),
-            ("最大节点展示", str(summary["max_nodes"])),
+            ("最大节点记录", str(summary["max_nodes"])),
             ("最大 speedup", f"{max(speedups):.3f}x"),
         ],
     )
@@ -280,12 +375,12 @@ def build_docx(summary: dict[str, object]) -> None:
     add_heading(doc, "1. 测试依据与目标")
     add_paragraph(
         doc,
-        "本测试以 Fe-Cu-vacancy 合金体系为样例，围绕材料能量计算、跨尺度数据生成、并行训练展示、材料演化分析和材料设计建议形成完整测试闭环。",
+        "本测试以 Fe-Cu-vacancy 合金体系为样例，围绕材料能量计算、跨尺度数据生成、并行扩展性记录、材料演化分析和材料设计建议形成完整测试闭环。",
     )
     add_bullet(doc, "验证 Fe-Cu-vacancy 典型算例可以完成 KMC 初始化、能量计算、扩散率计算和逐步演化。")
-    add_bullet(doc, "验证 DeepH / DeepKS 能量接口在初始化阶段输出接口能量，并保留真实库调用路径。")
+    add_bullet(doc, "验证 DeepH / DeepKS 能量接口在初始化阶段输出接口能量，并保留库调用路径。")
     add_bullet(doc, "验证不同温度、不同 Cu 含量和不同 vacancy 含量条件下的跨尺度数据生成与组织结构分析。")
-    add_bullet(doc, "验证优化前后运行时间、主要耗时模块、并行训练展示和材料设计建议均有可追溯输出。")
+    add_bullet(doc, "验证优化前后运行时间、主要耗时模块、并行扩展性记录和材料设计建议均有可追溯输出。")
 
     add_heading(doc, "2. 测试体系")
     add_table(
@@ -325,8 +420,8 @@ def build_docx(summary: dict[str, object]) -> None:
     add_table(
         doc,
         ["阶段", "测试内容", "成果形式", "状态"],
-        [[r["stage"], r["test_content"], r["generated_artifacts"], r["status"]] for r in stage_rows],
-        [800, 3100, 4560, 900],
+        [[r["stage"], r["test_content"], short_artifacts(r["generated_artifacts"]), status_label(r["status"])] for r in stage_rows],
+        [800, 3500, 4160, 900],
     )
 
     add_heading(doc, "5. 关键结果")
@@ -340,12 +435,13 @@ def build_docx(summary: dict[str, object]) -> None:
             ["最终 pair energy 范围", f"{energy_min:.6f} 到 {energy_max:.6f} eV"],
             ["Cu 最大团簇范围", f"{cluster_min} 到 {cluster_max}"],
             ["三种规模 speedup", ", ".join(f"{v:.3f}x" for v in speedups)],
-            ["DeepH / DeepKS 并行展示", f"覆盖 1 到 {summary['max_nodes']} 节点"],
-            ["输出清单条目", str(summary["manifest_count"])],
+            ["DeepH / DeepKS 并行扩展性记录", f"覆盖 1 到 {summary['max_nodes']} 节点"],
+            ["输出清单记录文件数", f"{summary['manifest_count']}（不含 manifest 自身）"],
         ],
         [2700, 6660],
     )
 
+    doc.add_page_break()
     add_heading(doc, "6. 图形结果")
     for title_text, image_name, width in [
         ("图 1  材料能量变化与 Cu 团簇演化曲线", "material_evolution_curves.png", 6.7),
@@ -362,11 +458,11 @@ def build_docx(summary: dict[str, object]) -> None:
     best_cluster = summary["best_cluster"]
     add_bullet(
         doc,
-        f"单位位点能量最低组合为 {best_energy['case_id']}：T={best_energy['temperature_K']} K，Cu={best_energy['cu_density']}，V={best_energy['v_density']}。",
+        f"单位位点能量最低组合为 {best_energy['case_id']}：T={fmt_temp(best_energy['temperature_K'])}，Cu={best_energy['cu_density']}，V={best_energy['v_density']}。",
     )
     add_bullet(
         doc,
-        f"Cu 团簇最大组合为 {best_cluster['case_id']}：T={best_cluster['temperature_K']} K，Cu={best_cluster['cu_density']}，V={best_cluster['v_density']}，max_cluster={best_cluster['final_cu_cluster_max']}。",
+        f"Cu 团簇最大组合为 {best_cluster['case_id']}：T={fmt_temp(best_cluster['temperature_K'])}，Cu={best_cluster['cu_density']}，V={best_cluster['v_density']}，max_cluster={best_cluster['final_cu_cluster_max']}。",
     )
     add_bullet(doc, "若目标是降低能量并保持均匀固溶，建议优先采用 Fe-rich、低到中等 Cu 配方，并控制 vacancy density。")
     add_bullet(doc, "若目标是展示 Cu-rich clustering 或析出趋势，建议提高 Cu density，并在中高温条件下延长 KMC 演化步数。")
@@ -374,7 +470,7 @@ def build_docx(summary: dict[str, object]) -> None:
     add_heading(doc, "8. 输出文件索引与结论")
     add_paragraph(
         doc,
-        "本测试已形成 Fe-Cu-vacancy 体系从典型算例、能量计算、跨尺度演化、性能对比、并行训练展示到材料设计建议的完整 KMC 测试链路，输出覆盖方案要求的主要结果，可用于验收汇报和后续复核。",
+        "本测试已形成 Fe-Cu-vacancy 体系从典型算例、能量计算、跨尺度演化、性能对比、并行扩展性记录到材料设计建议的完整 KMC 测试链路，输出覆盖方案要求的主要结果，可用于验收汇报和后续复核。",
     )
     add_table(
         doc,
@@ -401,6 +497,7 @@ def main() -> int:
     summary = make_summary()
     build_markdown(summary)
     build_docx(summary)
+    refresh_manifest()
     print(DOCX_OUT)
     print(MD_OUT)
     return 0

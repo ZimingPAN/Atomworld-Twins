@@ -24,8 +24,8 @@
 [KMC] 开始算例 ms_016: T=700 K, Cu=0.03, V=0.001, size=(12, 12, 12), steps=25
 [KMC] 开始算例 ms_017: T=700 K, Cu=0.03, V=0.002, size=(12, 12, 12), steps=25
 [性能] 开始固定 Fe-Cu-vacancy 算例优化前后对比。
-[性能] size=(8, 8, 8): baseline=0.0484s, optimized=0.0366s, speedup=1.32x
-[性能] size=(10, 10, 10): baseline=0.0639s, optimized=0.0519s, speedup=1.23x
-[性能] size=(12, 12, 12): baseline=0.0952s, optimized=0.0822s, speedup=1.16x
+[性能] size=(8, 8, 8): baseline=0.0537s, optimized=0.0437s, speedup=1.23x
+[性能] size=(10, 10, 10): baseline=0.0684s, optimized=0.0518s, speedup=1.32x
+[性能] size=(12, 12, 12): baseline=0.0953s, optimized=0.0803s, speedup=1.19x
 [完成] KMC 横向测试全部输出已生成。
 [完成] 输出清单=outputs/manifest.json
