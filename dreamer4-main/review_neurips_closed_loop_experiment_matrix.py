@@ -354,7 +354,7 @@ def _write_plot(rows: list[dict[str, Any]], path: Path) -> None:
         axes[1, 1].set_xticklabels(labels, rotation=25, ha="right", fontsize=8)
         axes[1, 1].legend(fontsize=8, frameon=False)
         axes[1, 1].grid(axis="y", color="#d8d8d8", linewidth=0.6, alpha=0.8)
-    fig.suptitle("AtomWorld-Twins NeurIPS Closed-loop Review", fontsize=13, weight="bold")
+    fig.suptitle("AtomWorld-Mirror NeurIPS Closed-loop Review", fontsize=13, weight="bold")
     fig.savefig(path, dpi=220)
     fig.savefig(path.with_suffix(".pdf"))
     plt.close(fig)

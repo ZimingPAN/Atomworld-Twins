@@ -26,11 +26,18 @@ __pycache__/
 
 /results/
 
+# 根目录绘图/诊断产物保留本地，不同步到 git 远端
+/fig/
+
 # 暂不将 LightZero 基线代码推送到远端
 /LightZero-main/
 
 # 将完整 RLKMC 历史/backend 仓库保留为本地私有目录
 /RLKMC-MASSIVE-main/
+
+# 本地审稿代码包产物，不同步到 git 远端
+/review_code_package/
+/AtomWorld-Mirror*_review_code*.zip
 
 AGENTS.md
 

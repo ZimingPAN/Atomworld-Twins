@@ -1,0 +1,661 @@
+\begin{thebibliography}{80}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Alder and Wainwright(1959)]{alder1959md}
+B.~J. Alder and T.~E. Wainwright.
+\newblock {{Studies in Molecular Dynamics. I. General Method}}.
+\newblock \emph{The Journal of Chemical Physics}, 31\penalty0 (2):\penalty0
+  459--466, 1959.
+\newblock \doi{10.1063/1.1730376}.
+
+\bibitem[Verlet(1967)]{verlet1967fluids}
+Loup Verlet.
+\newblock {{Computer ``Experiments'' on Classical Fluids. I. Thermodynamical
+  Properties of Lennard-Jones Molecules}}.
+\newblock \emph{Physical Review}, 159:\penalty0 98--103, 1967.
+\newblock \doi{10.1103/PhysRev.159.98}.
+
+\bibitem[Bortz et~al.(1975)Bortz, Kalos, and Lebowitz]{bortz1975nfold}
+A.~B. Bortz, M.~H. Kalos, and J.~L. Lebowitz.
+\newblock {{A New Algorithm for Monte Carlo Simulation of Ising Spin Systems}}.
+\newblock \emph{Journal of Computational Physics}, 17\penalty0 (1):\penalty0
+  10--18, 1975.
+\newblock \doi{10.1016/0021-9991(75)90060-1}.
+
+\bibitem[Gillespie(1976)]{gillespie1976general}
+Daniel~T. Gillespie.
+\newblock {{A General Method for Numerically Simulating the Stochastic Time
+  Evolution of Coupled Chemical Reactions}}.
+\newblock \emph{Journal of Computational Physics}, 22\penalty0 (4):\penalty0
+  403--434, 1976.
+\newblock \doi{10.1016/0021-9991(76)90041-3}.
+
+\bibitem[Fichthorn and Weinberg(1991)]{fichthorn1991dmc}
+Kristen~A. Fichthorn and William~H. Weinberg.
+\newblock {{Theoretical Foundations of Dynamical Monte Carlo Simulations}}.
+\newblock \emph{The Journal of Chemical Physics}, 95\penalty0 (2):\penalty0
+  1090--1096, 1991.
+\newblock \doi{10.1063/1.461138}.
+
+\bibitem[Voter et~al.(2002)Voter, Montalenti, and Germann]{voter2002timescale}
+Arthur~F. Voter, Francesco Montalenti, and Timothy~C. Germann.
+\newblock {{Extending the Time Scale in Atomistic Simulation of Materials}}.
+\newblock \emph{Annual Review of Materials Research}, 32:\penalty0 321--346,
+  2002.
+\newblock \doi{10.1146/annurev.matsci.32.112601.141541}.
+
+\bibitem[Henkelman et~al.(2000)Henkelman, Uberuaga, and
+  J{\'o}nsson]{henkelman2000neb}
+Graeme Henkelman, Blas~P. Uberuaga, and Hannes J{\'o}nsson.
+\newblock {{A Climbing Image Nudged Elastic Band Method for Finding Saddle
+  Points and Minimum Energy Paths}}.
+\newblock \emph{The Journal of Chemical Physics}, 113\penalty0 (22):\penalty0
+  9901--9904, 2000.
+\newblock \doi{10.1063/1.1329672}.
+
+\bibitem[Laio and Parrinello(2002)]{laio2002metadynamics}
+Alessandro Laio and Michele Parrinello.
+\newblock {{Escaping Free-Energy Minima}}.
+\newblock \emph{Proceedings of the National Academy of Sciences}, 99\penalty0
+  (20):\penalty0 12562--12566, 2002.
+\newblock \doi{10.1073/pnas.202427399}.
+
+\bibitem[Bolhuis et~al.(2002)Bolhuis, Chandler, Dellago, and
+  Geissler]{bolhuis2002tps}
+Peter~G. Bolhuis, David Chandler, Christoph Dellago, and Phillip~L. Geissler.
+\newblock {{Transition Path Sampling: Throwing Ropes over Rough Mountain
+  Passes, in the Dark}}.
+\newblock \emph{Annual Review of Physical Chemistry}, 53:\penalty0 291--318,
+  2002.
+\newblock \doi{10.1146/annurev.physchem.53.082301.113146}.
+
+\bibitem[Soisson et~al.(1996)Soisson, Barbu, and Martin]{soisson1996cufe}
+F.~Soisson, A.~Barbu, and G.~Martin.
+\newblock {{Monte Carlo Simulations of Copper Precipitation in Dilute
+  Iron-Copper Alloys During Thermal Ageing and Under Electron Irradiation}}.
+\newblock \emph{Acta Materialia}, 44\penalty0 (9):\penalty0 3789--3800, 1996.
+\newblock \doi{10.1016/1359-6454(95)00447-5}.
+
+\bibitem[Soisson and Fu(2007)]{soisson2007cufe}
+Fr{\'e}d{\'e}ric Soisson and Chu-Chun Fu.
+\newblock {{Cu}-Precipitation Kinetics in {$\alpha$-{Fe}} from Atomistic
+  Simulations: Vacancy-Trapping Effects and {Cu}-Cluster Mobility}.
+\newblock \emph{Physical Review B}, 76:\penalty0 214102, 2007.
+\newblock \doi{10.1103/PhysRevB.76.214102}.
+
+\bibitem[Kingma and Welling(2014)]{kingma2014vae}
+Diederik~P. Kingma and Max Welling.
+\newblock {{Auto-Encoding Variational Bayes}}.
+\newblock In \emph{International Conference on Learning Representations}, 2014.
+\newblock \doi{10.48550/arXiv.1312.6114}.
+
+\bibitem[Hafner et~al.(2019)Hafner, Lillicrap, Fischer, Villegas, Ha, Lee, and
+  Davidson]{hafner2019planet}
+Danijar Hafner, Timothy Lillicrap, Ian Fischer, Ruben Villegas, David Ha,
+  Honglak Lee, and James Davidson.
+\newblock {{Learning Latent Dynamics for Planning from Pixels}}.
+\newblock In \emph{Proceedings of the 36th International Conference on Machine
+  Learning}, volume~97 of \emph{Proceedings of Machine Learning Research},
+  pages 2555--2565. PMLR, 2019.
+\newblock URL \url{https://proceedings.mlr.press/v97/hafner19a.html}.
+
+\bibitem[Hafner et~al.(2020)Hafner, Lillicrap, Ba, and
+  Norouzi]{hafner2020dreamer}
+Danijar Hafner, Timothy Lillicrap, Jimmy Ba, and Mohammad Norouzi.
+\newblock {{Dream to Control: Learning Behaviors by Latent Imagination}}.
+\newblock In \emph{International Conference on Learning Representations}, 2020.
+\newblock URL \url{https://openreview.net/forum?id=S1lOTC4tDS}.
+
+\bibitem[Hafner et~al.(2025)Hafner, Yan, and Lillicrap]{hafner2025dreamer4}
+Danijar Hafner, Wilson Yan, and Timothy Lillicrap.
+\newblock {{Training Agents Inside of Scalable World Models}}.
+\newblock \emph{arXiv preprint arXiv:2509.24527}, 2025.
+\newblock \doi{10.48550/arXiv.2509.24527}.
+
+\bibitem[Chatterjee and Vlachos(2007)]{chatterjee2007kmc}
+Abhijit Chatterjee and Dionisios~G. Vlachos.
+\newblock {{An Overview of Spatial Microscopic and Accelerated Kinetic Monte
+  Carlo Methods}}.
+\newblock \emph{Journal of Computer-Aided Materials Design}, 14:\penalty0
+  253--308, 2007.
+\newblock \doi{10.1007/s10820-006-9042-9}.
+
+\bibitem[Gillespie(1977)]{gillespie1977exact}
+Daniel~T. Gillespie.
+\newblock {{Exact Stochastic Simulation of Coupled Chemical Reactions}}.
+\newblock \emph{The Journal of Physical Chemistry}, 81\penalty0 (25):\penalty0
+  2340--2361, 1977.
+\newblock \doi{10.1021/j100540a008}.
+
+\bibitem[Plimpton(1995)]{plimpton1995fast}
+Steve Plimpton.
+\newblock {{Fast Parallel Algorithms for Short-Range Molecular Dynamics}}.
+\newblock \emph{Journal of Computational Physics}, 117\penalty0 (1):\penalty0
+  1--19, 1995.
+\newblock \doi{10.1006/jcph.1995.1039}.
+
+\bibitem[Thompson et~al.(2022)Thompson, Aktulga, Berger, Bolintineanu, Brown,
+  Crozier, in~'t Veld, Kohlmeyer, Moore, Nguyen, et~al.]{thompson2022lammps}
+Aidan~P. Thompson, H.~Metin Aktulga, Richard Berger, Dan~S. Bolintineanu,
+  W.~Michael Brown, Paul~S. Crozier, Pieter~J. in~'t Veld, Axel Kohlmeyer,
+  Stan~G. Moore, Trung~Dac Nguyen, et~al.
+\newblock {{LAMMPS} -- A Flexible Simulation Tool for Particle-Based Materials
+  Modeling at the Atomic, Meso, and Continuum Scales}.
+\newblock \emph{Computer Physics Communications}, 271:\penalty0 108171, 2022.
+\newblock \doi{10.1016/j.cpc.2021.108171}.
+
+\bibitem[Sutton(1988)]{sutton1988td}
+Richard~S. Sutton.
+\newblock {{Learning to Predict by the Methods of Temporal Differences}}.
+\newblock \emph{Machine Learning}, 3\penalty0 (1):\penalty0 9--44, 1988.
+\newblock \doi{10.1007/BF00115009}.
+
+\bibitem[Sutton(1991)]{sutton1990dyna}
+Richard~S. Sutton.
+\newblock {{Dyna, an Integrated Architecture for Learning, Planning, and
+  Reacting}}.
+\newblock \emph{ACM SIGART Bulletin}, 2\penalty0 (4):\penalty0 160--163, 1991.
+\newblock \doi{10.1145/122344.122377}.
+
+\bibitem[Sutton et~al.(1999)Sutton, Precup, and Singh]{sutton1999options}
+Richard~S. Sutton, Doina Precup, and Satinder Singh.
+\newblock {{Between {MDPs} and Semi-{MDPs}: A Framework for Temporal
+  Abstraction in Reinforcement Learning}}.
+\newblock \emph{Artificial Intelligence}, 112\penalty0 (1--2):\penalty0
+  181--211, 1999.
+\newblock \doi{10.1016/S0004-3702(99)00052-1}.
+
+\bibitem[Hafner et~al.(2021)Hafner, Lillicrap, Norouzi, and
+  Ba]{hafner2021dreamerv2}
+Danijar Hafner, Timothy Lillicrap, Mohammad Norouzi, and Jimmy Ba.
+\newblock {{Mastering {Atari} with Discrete World Models}}.
+\newblock In \emph{International Conference on Learning Representations}, 2021.
+\newblock URL \url{https://openreview.net/forum?id=0oabwyZbOu}.
+
+\bibitem[Deisenroth and Rasmussen(2011)]{deisenroth2011pilco}
+Marc~Peter Deisenroth and Carl~Edward Rasmussen.
+\newblock {{PILCO}: A Model-Based and Data-Efficient Approach to Policy
+  Search}.
+\newblock In \emph{Proceedings of the 28th International Conference on Machine
+  Learning}, pages 465--472, 2011.
+\newblock URL \url{https://icml.cc/Conferences/2011/papers/323_icmlpaper.pdf}.
+
+\bibitem[Nagabandi et~al.(2018)Nagabandi, Kahn, Fearing, and
+  Levine]{nagabandi2018neuralmb}
+Anusha Nagabandi, Gregory Kahn, Ronald~S. Fearing, and Sergey Levine.
+\newblock {{Neural Network Dynamics for Model-Based Deep Reinforcement Learning
+  with Model-Free Fine-Tuning}}.
+\newblock In \emph{2018 IEEE International Conference on Robotics and
+  Automation}, pages 7559--7566. IEEE, 2018.
+\newblock \doi{10.1109/ICRA.2018.8463189}.
+
+\bibitem[Chua et~al.(2018)Chua, Calandra, McAllister, and Levine]{chua2018pets}
+Kurtland Chua, Roberto Calandra, Rowan McAllister, and Sergey Levine.
+\newblock {{Deep Reinforcement Learning in a Handful of Trials Using
+  Probabilistic Dynamics Models}}.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~31, pages 4759--4770, 2018.
+\newblock URL
+  \url{https://proceedings.neurips.cc/paper/2018/hash/3de568f8597b94bda53149c7d7f5958c-Abstract.html}.
+
+\bibitem[Janner et~al.(2019)Janner, Fu, Zhang, and Levine]{janner2019mbpo}
+Michael Janner, Justin Fu, Marvin Zhang, and Sergey Levine.
+\newblock {{When to Trust Your Model: Model-Based Policy Optimization}}.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~32, pages 12498--12509, 2019.
+\newblock URL
+  \url{https://proceedings.neurips.cc/paper/2019/hash/5faf461eff3099671ad63c6f3f094f7f-Abstract.html}.
+
+\bibitem[Kaiser et~al.(2020)Kaiser, Babaeizadeh, Milos, Osinski, Campbell,
+  Czechowski, Erhan, Finn, Kozakowski, Levine, Mohiuddin, Sepassi, Tucker, and
+  Michalewski]{kaiser2020atari}
+Lukasz Kaiser, Mohammad Babaeizadeh, Piotr Milos, Blazej Osinski, Roy~H.
+  Campbell, Konrad Czechowski, Dumitru Erhan, Chelsea Finn, Piotr Kozakowski,
+  Sergey Levine, Afroz Mohiuddin, Ryan Sepassi, George Tucker, and Henryk
+  Michalewski.
+\newblock {{Model Based Reinforcement Learning for {Atari}}}.
+\newblock In \emph{International Conference on Learning Representations}, 2020.
+\newblock URL \url{https://openreview.net/forum?id=S1xCPJHtDB}.
+
+\bibitem[Battaglia et~al.(2016)Battaglia, Pascanu, Lai, Rezende, and
+  Kavukcuoglu]{battaglia2016interaction}
+Peter Battaglia, Razvan Pascanu, Matthew Lai, Danilo~Jimenez Rezende, and Koray
+  Kavukcuoglu.
+\newblock {{Interaction Networks for Learning About Objects, Relations and
+  Physics}}.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~29, pages 4502--4510, 2016.
+\newblock URL
+  \url{https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html}.
+
+\bibitem[Sanchez-Gonzalez et~al.(2018)Sanchez-Gonzalez, Heess, Springenberg,
+  Merel, Riedmiller, Hadsell, and Battaglia]{sanchez2018physics}
+Alvaro Sanchez-Gonzalez, Nicolas Heess, Jost~Tobias Springenberg, Josh Merel,
+  Martin Riedmiller, Raia Hadsell, and Peter~W. Battaglia.
+\newblock {{Graph Networks as Learnable Physics Engines for Inference and
+  Control}}.
+\newblock In \emph{Proceedings of the 35th International Conference on Machine
+  Learning}, volume~80 of \emph{Proceedings of Machine Learning Research},
+  pages 4470--4479. PMLR, 2018.
+\newblock URL \url{https://proceedings.mlr.press/v80/sanchez-gonzalez18a.html}.
+
+\bibitem[Kipf et~al.(2018)Kipf, Fetaya, Wang, Welling, and Zemel]{kipf2018nri}
+Thomas~N. Kipf, Ethan Fetaya, Kuan-Chieh Wang, Max Welling, and Richard~S.
+  Zemel.
+\newblock {{Neural Relational Inference for Interacting Systems}}.
+\newblock In \emph{Proceedings of the 35th International Conference on Machine
+  Learning}, volume~80 of \emph{Proceedings of Machine Learning Research},
+  pages 2688--2697. PMLR, 2018.
+\newblock URL \url{https://proceedings.mlr.press/v80/kipf18a.html}.
+
+\bibitem[Sanchez-Gonzalez et~al.(2020)Sanchez-Gonzalez, Godwin, Pfaff, Ying,
+  Leskovec, and Battaglia]{sanchez2020learning}
+Alvaro Sanchez-Gonzalez, Jonathan Godwin, Tobias Pfaff, Rex Ying, Jure
+  Leskovec, and Peter~W. Battaglia.
+\newblock {{Learning to Simulate Complex Physics with Graph Networks}}.
+\newblock In \emph{Proceedings of the 37th International Conference on Machine
+  Learning}, volume 119 of \emph{Proceedings of Machine Learning Research},
+  pages 8459--8468. PMLR, 2020.
+\newblock URL
+  \url{https://proceedings.mlr.press/v119/sanchez-gonzalez20a.html}.
+
+\bibitem[Pfaff et~al.(2021)Pfaff, Fortunato, Sanchez-Gonzalez, and
+  Battaglia]{pfaff2021meshgraphnets}
+Tobias Pfaff, Meire Fortunato, Alvaro Sanchez-Gonzalez, and Peter~W. Battaglia.
+\newblock {{Learning Mesh-Based Simulation with Graph Networks}}.
+\newblock In \emph{International Conference on Learning Representations}, 2021.
+\newblock URL \url{https://openreview.net/forum?id=roNqYL0_XP}.
+
+\bibitem[Gilmer et~al.(2017)Gilmer, Schoenholz, Riley, Vinyals, and
+  Dahl]{gilmer2017mpnn}
+Justin Gilmer, Samuel~S. Schoenholz, Patrick~F. Riley, Oriol Vinyals, and
+  George~E. Dahl.
+\newblock {{Neural Message Passing for Quantum Chemistry}}.
+\newblock In \emph{Proceedings of the 34th International Conference on Machine
+  Learning}, volume~70 of \emph{Proceedings of Machine Learning Research},
+  pages 1263--1272. PMLR, 2017.
+\newblock URL \url{https://proceedings.mlr.press/v70/gilmer17a.html}.
+
+\bibitem[Kipf and Welling(2017)]{kipf2017gcn}
+Thomas~N. Kipf and Max Welling.
+\newblock {{Semi-Supervised Classification with Graph Convolutional Networks}}.
+\newblock In \emph{International Conference on Learning Representations}, 2017.
+\newblock URL \url{https://openreview.net/forum?id=SJU4ayYgl}.
+
+\bibitem[Veli{\v{c}}kovi{\'c} et~al.(2018)Veli{\v{c}}kovi{\'c}, Cucurull,
+  Casanova, Romero, Li{\`o}, and Bengio]{velickovic2018gat}
+Petar Veli{\v{c}}kovi{\'c}, Guillem Cucurull, Arantxa Casanova, Adriana Romero,
+  Pietro Li{\`o}, and Yoshua Bengio.
+\newblock {{Graph Attention Networks}}.
+\newblock In \emph{International Conference on Learning Representations}, 2018.
+\newblock URL \url{https://openreview.net/forum?id=rJXMpikCZ}.
+
+\bibitem[Xu et~al.(2019)Xu, Hu, Leskovec, and Jegelka]{xu2019gin}
+Keyulu Xu, Weihua Hu, Jure Leskovec, and Stefanie Jegelka.
+\newblock {{How Powerful are Graph Neural Networks?}}
+\newblock In \emph{International Conference on Learning Representations}, 2019.
+\newblock URL \url{https://openreview.net/forum?id=ryGs6iA5Km}.
+
+\bibitem[Gasteiger et~al.(2020)Gasteiger, Gro{\ss}, and
+  G{\"u}nnemann]{gasteiger2020dimenet}
+Johannes Gasteiger, Janek Gro{\ss}, and Stephan G{\"u}nnemann.
+\newblock {{Directional Message Passing for Molecular Graphs}}.
+\newblock In \emph{International Conference on Learning Representations}, 2020.
+\newblock URL \url{https://openreview.net/forum?id=B1eWbxStPH}.
+
+\bibitem[Satorras et~al.(2021)Satorras, Hoogeboom, and
+  Welling]{satorras2021egnn}
+V{\'i}ctor~Garcia Satorras, Emiel Hoogeboom, and Max Welling.
+\newblock {{E(n)} Equivariant Graph Neural Networks}.
+\newblock In \emph{Proceedings of the 38th International Conference on Machine
+  Learning}, volume 139 of \emph{Proceedings of Machine Learning Research},
+  pages 9323--9332. PMLR, 2021.
+\newblock URL \url{https://proceedings.mlr.press/v139/satorras21a.html}.
+
+\bibitem[Fuchs et~al.(2020)Fuchs, Worrall, Fischer, and Welling]{fuchs2020se3}
+Fabian~B. Fuchs, Daniel~E. Worrall, Volker Fischer, and Max Welling.
+\newblock {{SE(3)}-Transformers: 3D Roto-Translation Equivariant Attention
+  Networks}.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~33, pages 1970--1981, 2020.
+\newblock URL
+  \url{https://proceedings.neurips.cc/paper/2020/hash/15231a7ce4ba789d13b722cc5c955834-Abstract.html}.
+
+\bibitem[Henkelman and J{\'o}nsson(2001)]{henkelman2001akmc}
+Graeme Henkelman and Hannes J{\'o}nsson.
+\newblock {{Long Time Scale Kinetic Monte Carlo Simulations Without Lattice
+  Approximation and Predefined Event Table}}.
+\newblock \emph{The Journal of Chemical Physics}, 115\penalty0 (21):\penalty0
+  9657--9666, 2001.
+\newblock \doi{10.1063/1.1415500}.
+
+\bibitem[Zamora et~al.(2016)Zamora, Voter, Perez, Santhi, Mniszewski,
+  Thulasidasan, and Eidenbenz]{zamora2016spectad}
+Richard~J. Zamora, Arthur~F. Voter, Danny Perez, Nandakishore Santhi, Susan~M.
+  Mniszewski, Sunil Thulasidasan, and Stephan~J. Eidenbenz.
+\newblock {{Discrete Event Performance Prediction of Speculatively Parallel
+  Temperature-Accelerated Dynamics}}.
+\newblock \emph{SIMULATION}, 92\penalty0 (12):\penalty0 1065--1086, 2016.
+\newblock \doi{10.1177/0037549716674806}.
+
+\bibitem[Liu(2023)]{liu2023trps}
+Zhirong Liu.
+\newblock {{Accelerating Kinetics with Time-Reversal Path Sampling}}.
+\newblock \emph{Molecules}, 28\penalty0 (24):\penalty0 8147, 2023.
+\newblock \doi{10.3390/molecules28248147}.
+
+\bibitem[Lin et~al.(2019)Lin, Feng, and Hlavacek]{lin2019partialscaling}
+Yen~Ting Lin, Song Feng, and William~S. Hlavacek.
+\newblock {{Scaling Methods for Accelerating Kinetic Monte Carlo Simulations of
+  Chemical Reaction Networks}}.
+\newblock \emph{The Journal of Chemical Physics}, 150\penalty0 (24):\penalty0
+  244101, 2019.
+\newblock \doi{10.1063/1.5096774}.
+
+\bibitem[Daw and Baskes(1984)]{daw1984eam}
+Murray~S. Daw and M.~I. Baskes.
+\newblock {{Embedded-Atom Method: Derivation and Application to Impurities,
+  Surfaces, and Other Defects in Metals}}.
+\newblock \emph{Physical Review B}, 29:\penalty0 6443--6453, 1984.
+\newblock \doi{10.1103/PhysRevB.29.6443}.
+
+\bibitem[Finnis and Sinclair(1984)]{finnis1984nbody}
+M.~W. Finnis and J.~E. Sinclair.
+\newblock {{A Simple Empirical {N}-Body Potential for Transition Metals}}.
+\newblock \emph{Philosophical Magazine A}, 50\penalty0 (1):\penalty0 45--55,
+  1984.
+\newblock \doi{10.1080/01418618408244210}.
+
+\bibitem[Messina et~al.(2017)Messina, Castin, Domain, and
+  Olsson]{messina2017annkmc}
+Luca Messina, Nicolas Castin, Christophe Domain, and P{\aa}r Olsson.
+\newblock {{Introducing Ab Initio Based Neural Networks for Transition-Rate
+  Prediction in Kinetic Monte Carlo Simulations}}.
+\newblock \emph{Physical Review B}, 95:\penalty0 064112, 2017.
+\newblock \doi{10.1103/PhysRevB.95.064112}.
+
+\bibitem[Castin et~al.(2017)Castin, Messina, Domain, Pasianot, and
+  Olsson]{castin2017nnp}
+Nicolas Castin, Luca Messina, Christophe Domain, Roberto~C. Pasianot, and
+  P{\aa}r Olsson.
+\newblock {{Improved Atomistic Monte Carlo Models Based on Ab-Initio-Trained
+  Neural Networks: Application to {FeCu} and {FeCr} Alloys}}.
+\newblock \emph{Physical Review B}, 95:\penalty0 214117, 2017.
+\newblock \doi{10.1103/PhysRevB.95.214117}.
+
+\bibitem[Jain et~al.(2013)Jain, Ong, Hautier, Chen, Richards, Dacek, Cholia,
+  Gunter, Skinner, Ceder, et~al.]{jain2013materialsproject}
+Anubhav Jain, Shyue~Ping Ong, Geoffroy Hautier, Wei Chen, William~Davidson
+  Richards, Stephen Dacek, Shreyas Cholia, Dan Gunter, David Skinner, Gerbrand
+  Ceder, et~al.
+\newblock {{Commentary: The Materials Project: A Materials Genome Approach to
+  Accelerating Materials Innovation}}.
+\newblock \emph{APL Materials}, 1:\penalty0 011002, 2013.
+\newblock \doi{10.1063/1.4812323}.
+
+\bibitem[Curtarolo et~al.(2012)Curtarolo, Setyawan, Hart, Jahnatek, Chepulskii,
+  Taylor, Wang, Xue, Yang, Levy, et~al.]{curtarolo2012aflow}
+Stefano Curtarolo, Wahyu Setyawan, Gus L.~W. Hart, Michal Jahnatek, Roman~V.
+  Chepulskii, Richard~H. Taylor, Shidong Wang, Junkai Xue, Kesong Yang, Ohad
+  Levy, et~al.
+\newblock {{AFLOW}: An Automatic Framework for High-Throughput Materials
+  Discovery}.
+\newblock \emph{Computational Materials Science}, 58:\penalty0 218--226, 2012.
+\newblock \doi{10.1016/j.commatsci.2012.02.005}.
+
+\bibitem[Ong et~al.(2013)Ong, Richards, Jain, Hautier, Kocher, Cholia, Gunter,
+  Chevrier, Persson, and Ceder]{ong2013pymatgen}
+Shyue~Ping Ong, William~Davidson Richards, Anubhav Jain, Geoffroy Hautier,
+  Michael Kocher, Shreyas Cholia, Dan Gunter, Vincent~L. Chevrier, Kristin~A.
+  Persson, and Gerbrand Ceder.
+\newblock {{Python Materials Genomics ({pymatgen}): A Robust, Open-Source
+  Python Library for Materials Analysis}}.
+\newblock \emph{Computational Materials Science}, 68:\penalty0 314--319, 2013.
+\newblock \doi{10.1016/j.commatsci.2012.10.028}.
+
+\bibitem[Ward et~al.(2018)Ward, Dunn, Faghaninia, Zimmermann, Bajaj, Wang,
+  Montoya, Chen, Bystrom, Dylla, et~al.]{ward2018matminer}
+Logan Ward, Alexander Dunn, Alireza Faghaninia, Nils E.~R. Zimmermann, Saurabh
+  Bajaj, Qi~Wang, Joseph Montoya, Jiming Chen, Kyle Bystrom, Maxwell Dylla,
+  et~al.
+\newblock {{Matminer}: An Open Source Toolkit for Materials Data Mining}.
+\newblock \emph{Computational Materials Science}, 152:\penalty0 60--69, 2018.
+\newblock \doi{10.1016/j.commatsci.2018.05.018}.
+
+\bibitem[Choudhary et~al.(2020)Choudhary, Garrity, Reid, DeCost, Biacchi,
+  Hight~Walker, Trautt, Hattrick-Simpers, Kusne, Centrone,
+  et~al.]{choudhary2020jarvis}
+Kamal Choudhary, Kevin~F. Garrity, Andrew C.~E. Reid, Brian DeCost, Adam~J.
+  Biacchi, Angela~R. Hight~Walker, Zachary Trautt, Jason Hattrick-Simpers,
+  A.~Gilad Kusne, Andrea Centrone, et~al.
+\newblock {{The Joint Automated Repository for Various Integrated Simulations
+  ({JARVIS}) for Data-Driven Materials Design}}.
+\newblock \emph{npj Computational Materials}, 6:\penalty0 173, 2020.
+\newblock \doi{10.1038/s41524-020-00440-1}.
+
+\bibitem[Li et~al.(2019)Li, Shang, Zhang, Li, Wu, Wang, Zhang, Li, Chen, and
+  Wei]{li2019openkmc}
+Kun Li, Honghui Shang, Yunquan Zhang, Shigang Li, Baodong Wu, Dong Wang, Libo
+  Zhang, Fang Li, Dexun Chen, and Zhiqiang Wei.
+\newblock {{OpenKMC}: A {KMC} Design for Hundred-Billion-Atom Simulation Using
+  Millions of Cores on {Sunway TaihuLight}}.
+\newblock In \emph{Proceedings of the International Conference for High
+  Performance Computing, Networking, Storage and Analysis}, pages 1--16. ACM,
+  2019.
+\newblock \doi{10.1145/3295500.3356165}.
+\newblock Article 68, 16 pages.
+
+\bibitem[Zhang et~al.(2018)Zhang, Han, Wang, Car, and
+  E]{zhang2018deeppotential}
+Linfeng Zhang, Jiequn Han, Han Wang, Roberto Car, and Weinan E.
+\newblock {{Deep Potential Molecular Dynamics: A Scalable Model with the
+  Accuracy of Quantum Mechanics}}.
+\newblock \emph{Physical Review Letters}, 120:\penalty0 143001, 2018.
+\newblock \doi{10.1103/PhysRevLett.120.143001}.
+
+\bibitem[Wang et~al.(2018)Wang, Zhang, Han, and E]{wang2018deepmdkit}
+Han Wang, Linfeng Zhang, Jiequn Han, and Weinan E.
+\newblock {{DeePMD-kit}: A Deep Learning Package for Many-Body Potential Energy
+  Representation and Molecular Dynamics}.
+\newblock \emph{Computer Physics Communications}, 228:\penalty0 178--184, 2018.
+\newblock \doi{10.1016/j.cpc.2018.03.016}.
+
+\bibitem[Batzner et~al.(2022)Batzner, Musaelian, Sun, Geiger, Mailoa,
+  Kornbluth, Molinari, Smidt, and Kozinsky]{batzner2022nequip}
+Simon Batzner, Albert Musaelian, Lixin Sun, Mario Geiger, Jonathan~P. Mailoa,
+  Mordechai Kornbluth, Nicola Molinari, Tess~E. Smidt, and Boris Kozinsky.
+\newblock {{E(3)}-Equivariant Graph Neural Networks for Data-Efficient and
+  Accurate Interatomic Potentials}.
+\newblock \emph{Nature Communications}, 13:\penalty0 2453, 2022.
+\newblock \doi{10.1038/s41467-022-29939-5}.
+
+\bibitem[Musaelian et~al.(2023)Musaelian, Batzner, Johansson, Sun, Owen,
+  Kornbluth, and Kozinsky]{musaelian2023allegro}
+Albert Musaelian, Simon Batzner, Anders Johansson, Lixin Sun, Cameron~J. Owen,
+  Mordechai Kornbluth, and Boris Kozinsky.
+\newblock {{Learning Local Equivariant Representations for Large-Scale
+  Atomistic Dynamics}}.
+\newblock \emph{Nature Communications}, 14:\penalty0 579, 2023.
+\newblock \doi{10.1038/s41467-023-36329-y}.
+
+\bibitem[Marrink et~al.(2007)Marrink, Risselada, Yefimov, Tieleman, and
+  de~Vries]{marrink2007martini}
+Siewert~J. Marrink, H.~Jelger Risselada, Serge Yefimov, D.~Peter Tieleman, and
+  Alex~H. de~Vries.
+\newblock {{The {MARTINI} Force Field: Coarse Grained Model for Biomolecular
+  Simulations}}.
+\newblock \emph{The Journal of Physical Chemistry B}, 111\penalty0
+  (27):\penalty0 7812--7824, 2007.
+\newblock \doi{10.1021/jp071097f}.
+
+\bibitem[Noid et~al.(2008)Noid, Chu, Ayton, Krishna, Izvekov, Voth, Das, and
+  Andersen]{noid2008mscg}
+W.~G. Noid, Jian-Wei Chu, Gary~S. Ayton, Vinod Krishna, Sergei Izvekov,
+  Gregory~A. Voth, Amit Das, and Hans~C. Andersen.
+\newblock {{The Multiscale Coarse-Graining Method. I. A Rigorous Bridge Between
+  Atomistic and Coarse-Grained Models}}.
+\newblock \emph{The Journal of Chemical Physics}, 128:\penalty0 244114, 2008.
+\newblock \doi{10.1063/1.2938860}.
+
+\bibitem[Garnier and Nastar(2013)]{garnier2013cgkmc}
+Thomas Garnier and Maylise Nastar.
+\newblock {{Coarse-Grained Kinetic Monte Carlo Simulation of Diffusion in
+  Alloys}}.
+\newblock \emph{Physical Review B}, 88:\penalty0 134207, 2013.
+\newblock \doi{10.1103/PhysRevB.88.134207}.
+
+\bibitem[Chodera and No{\'e}(2014)]{chodera2014msm}
+John~D. Chodera and Frank No{\'e}.
+\newblock {{Markov State Models of Biomolecular Conformational Dynamics}}.
+\newblock \emph{Current Opinion in Structural Biology}, 25:\penalty0 135--144,
+  2014.
+\newblock \doi{10.1016/j.sbi.2014.04.002}.
+
+\bibitem[Behler and Parrinello(2007)]{behler2007nn}
+J{\"o}rg Behler and Michele Parrinello.
+\newblock {{Generalized Neural-Network Representation of High-Dimensional
+  Potential-Energy Surfaces}}.
+\newblock \emph{Physical Review Letters}, 98:\penalty0 146401, 2007.
+\newblock \doi{10.1103/PhysRevLett.98.146401}.
+
+\bibitem[Sch{\"u}tt et~al.(2017)Sch{\"u}tt, Kindermans, Felix, Chmiela,
+  Tkatchenko, and M{\"u}ller]{schutt2017schnet}
+Kristof~T. Sch{\"u}tt, Pieter-Jan Kindermans, Huziel Enoc~Sauceda Felix, Stefan
+  Chmiela, Alexandre Tkatchenko, and Klaus-Robert M{\"u}ller.
+\newblock {{SchNet}: A Continuous-Filter Convolutional Neural Network for
+  Modeling Quantum Interactions}.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~30, pages 991--1001, 2017.
+\newblock URL
+  \url{https://proceedings.neurips.cc/paper/2017/hash/303ed4c69846ab36c2904d3ba8573050-Abstract.html}.
+
+\bibitem[Batatia et~al.(2022)Batatia, Kov{\'a}cs, Simm, Ortner, and
+  Cs{\'a}nyi]{batatia2022mace}
+Ilyes Batatia, D{\'a}vid~P{\'e}ter Kov{\'a}cs, Gregor N.~C. Simm, Christoph
+  Ortner, and G{\'a}bor Cs{\'a}nyi.
+\newblock {{MACE}: Higher Order Equivariant Message Passing Neural Networks for
+  Fast and Accurate Force Fields}.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~35, pages 11423--11436, 2022.
+\newblock URL
+  \url{https://proceedings.neurips.cc/paper_files/paper/2022/hash/4a36c3c51af11ed9f34615b81edb5bbc-Abstract-Conference.html}.
+
+\bibitem[Raissi et~al.(2019)Raissi, Perdikaris, and
+  Karniadakis]{raissi2019pinn}
+M.~Raissi, P.~Perdikaris, and G.~E. Karniadakis.
+\newblock {{Physics-Informed Neural Networks: A Deep Learning Framework for
+  Solving Forward and Inverse Problems Involving Nonlinear Partial Differential
+  Equations}}.
+\newblock \emph{Journal of Computational Physics}, 378:\penalty0 686--707,
+  2019.
+\newblock \doi{10.1016/j.jcp.2018.10.045}.
+
+\bibitem[Voter(1997)]{voter1997hyperdynamics}
+Arthur~F. Voter.
+\newblock {{Hyperdynamics: Accelerated Molecular Dynamics of Infrequent
+  Events}}.
+\newblock \emph{Physical Review Letters}, 78:\penalty0 3908--3911, 1997.
+\newblock \doi{10.1103/PhysRevLett.78.3908}.
+
+\bibitem[Schulman et~al.(2017)Schulman, Wolski, Dhariwal, Radford, and
+  Klimov]{schulman2017ppo}
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+\newblock {{Proximal Policy Optimization Algorithms}}.
+\newblock \emph{arXiv preprint arXiv:1707.06347}, 2017.
+\newblock \doi{10.48550/arXiv.1707.06347}.
+
+\bibitem[Tang et~al.(2024)Tang, Li, Song, Liu, Xu, Wang, Chung, and
+  Li]{tang2024tks}
+Hao Tang, Boning Li, Yixuan Song, Mengren Liu, Haowei Xu, Guoqing Wang, Heejung
+  Chung, and Ju~Li.
+\newblock {{Reinforcement Learning-Guided Long-Timescale Simulation of Hydrogen
+  Transport in Metals}}.
+\newblock \emph{Advanced Science}, 11\penalty0 (5):\penalty0 2304122, 2024.
+\newblock \doi{10.1002/advs.202304122}.
+
+\bibitem[Merchant et~al.(2023)Merchant, Batzner, Schoenholz, Aykol, Cheon, and
+  Cubuk]{merchant2023gnome}
+Amil Merchant, Simon Batzner, Samuel~S. Schoenholz, Muratahan Aykol, Gowoon
+  Cheon, and Ekin~D. Cubuk.
+\newblock {{Scaling Deep Learning for Materials Discovery}}.
+\newblock \emph{Nature}, 624:\penalty0 80--85, 2023.
+\newblock \doi{10.1038/s41586-023-06735-9}.
+
+\bibitem[Karniadakis et~al.(2021)Karniadakis, Kevrekidis, Lu, Perdikaris, Wang,
+  and Yang]{karniadakis2021piml}
+George~Em Karniadakis, Ioannis~G. Kevrekidis, Lu~Lu, Paris Perdikaris, Sifan
+  Wang, and Liu Yang.
+\newblock {{Physics-Informed Machine Learning}}.
+\newblock \emph{Nature Reviews Physics}, 3:\penalty0 422--440, 2021.
+\newblock \doi{10.1038/s42254-021-00314-5}.
+
+\bibitem[Yeh et~al.(2004)Yeh, Chen, Lin, Gan, Chin, Shun, Tsau, and
+  Chang]{yeh2004hea}
+Jien-Wei Yeh, Swe-Kai Chen, Su-Jien Lin, Jon-Yiew Gan, Tsung-Shune Chin,
+  Tao-Tsung Shun, Chun-Huei Tsau, and Shou-Yi Chang.
+\newblock {{Nanostructured High-Entropy Alloys with Multiple Principal
+  Elements: Novel Alloy Design Concepts and Outcomes}}.
+\newblock \emph{Advanced Engineering Materials}, 6\penalty0 (5):\penalty0
+  299--303, 2004.
+\newblock \doi{10.1002/adem.200300567}.
+
+\bibitem[Cantor et~al.(2004)Cantor, Chang, Knight, and Vincent]{cantor2004hea}
+B.~Cantor, I.~T.~H. Chang, P.~Knight, and A.~J.~B. Vincent.
+\newblock {{Microstructural Development in Equiatomic Multicomponent Alloys}}.
+\newblock \emph{Materials Science and Engineering: A}, 375--377:\penalty0
+  213--218, 2004.
+\newblock \doi{10.1016/j.msea.2003.10.257}.
+
+\bibitem[Miracle and Senkov(2017)]{miracle2017hea}
+D.~B. Miracle and O.~N. Senkov.
+\newblock {{A Critical Review of High Entropy Alloys and Related Concepts}}.
+\newblock \emph{Acta Materialia}, 122:\penalty0 448--511, 2017.
+\newblock \doi{10.1016/j.actamat.2016.08.081}.
+
+\bibitem[Rahman(1964)]{rahman1964argon}
+Aneesur Rahman.
+\newblock {{Correlations in the Motion of Atoms in Liquid Argon}}.
+\newblock \emph{Physical Review}, 136:\penalty0 A405--A411, 1964.
+\newblock \doi{10.1103/PhysRev.136.A405}.
+
+\bibitem[Bart{\'o}k et~al.(2010)Bart{\'o}k, Payne, Kondor, and
+  Cs{\'a}nyi]{bartok2010gap}
+Albert~P. Bart{\'o}k, Mike~C. Payne, Risi Kondor, and G{\'a}bor Cs{\'a}nyi.
+\newblock {{Gaussian Approximation Potentials: The Accuracy of Quantum
+  Mechanics, Without the Electrons}}.
+\newblock \emph{Physical Review Letters}, 104:\penalty0 136403, 2010.
+\newblock \doi{10.1103/PhysRevLett.104.136403}.
+
+\bibitem[Xie and Grossman(2018)]{xie2018cgcnn}
+Tian Xie and Jeffrey~C. Grossman.
+\newblock {{Crystal Graph Convolutional Neural Networks for an Accurate and
+  Interpretable Prediction of Material Properties}}.
+\newblock \emph{Physical Review Letters}, 120:\penalty0 145301, 2018.
+\newblock \doi{10.1103/PhysRevLett.120.145301}.
+
+\bibitem[Voter(1998)]{voter1998parallelreplica}
+Arthur~F. Voter.
+\newblock {{Parallel Replica Method for Dynamics of Infrequent Events}}.
+\newblock \emph{Physical Review B}, 57:\penalty0 R13985--R13988, 1998.
+\newblock \doi{10.1103/PhysRevB.57.R13985}.
+
+\bibitem[S{\o}rensen and Voter(2000)]{sorensen2000tad}
+Mads~R. S{\o}rensen and Arthur~F. Voter.
+\newblock {{Temperature-Accelerated Dynamics for Simulation of Infrequent
+  Events}}.
+\newblock \emph{The Journal of Chemical Physics}, 112\penalty0 (21):\penalty0
+  9599--9606, 2000.
+\newblock \doi{10.1063/1.481576}.
+
+\bibitem[Bojesen(2018)]{bojesen2018pgmc}
+Troels~Arnfred Bojesen.
+\newblock {{Policy-Guided Monte Carlo: Reinforcement-Learning Markov Chain
+  Dynamics}}.
+\newblock \emph{Physical Review E}, 98:\penalty0 063303, 2018.
+\newblock \doi{10.1103/PhysRevE.98.063303}.
+
+\end{thebibliography}

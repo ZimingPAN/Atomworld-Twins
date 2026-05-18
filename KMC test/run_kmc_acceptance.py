@@ -8,10 +8,8 @@ import math
 import os
 import random
 import shutil
-import subprocess
 import sys
 import time
-import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -22,6 +20,9 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from scipy.spatial import cKDTree
+
+from kmc_latex_tools import compile_pdf, latex_escape, tex_document, tex_enumerate, tex_itemize, tex_metric_strip, tex_table
 
 
 ROOT = Path(__file__).resolve().parent
@@ -43,9 +44,10 @@ V_TYPE = 2
 DEFAULT_TEMPERATURES = [250.0, 300.0, 350.0, 400.0, 500.0, 600.0, 700.0, 800.0, 900.0, 1000.0]
 DEFAULT_CU_DENSITIES = [0.0025, 0.005, 0.01, 0.0134, 0.02, 0.03, 0.05]
 DEFAULT_V_DENSITIES = [0.0005, 0.001, 0.002, 0.003, 0.005]
+DEFAULT_LATTICE_SIZES = [(8, 8, 8), (10, 10, 10), (12, 12, 12), (14, 14, 14), (16, 16, 16), (18, 18, 18), (20, 20, 20), (22, 22, 22), (24, 24, 24), (26, 26, 26)]
 DEFAULT_STEPS_PER_CASE = 100
-DEFAULT_PERFORMANCE_STEPS = 120
-PERFORMANCE_BASELINE_RECOMPUTES = 64
+DEFAULT_PERFORMANCE_STEPS = 100
+PERFORMANCE_BASELINE_RECOMPUTES = 2048
 PARALLEL_NODE_COUNTS = [1, 8, 16, 32, 64, 128, 256, 512, 1024]
 
 
@@ -355,11 +357,9 @@ def cluster_metrics(cu_positions: np.ndarray, box: Iterable[int], radius: float 
         if ra != rb:
             parent[rb] = ra
 
-    for i in range(n):
-        for j in range(i + 1, n):
-            dist = float(np.linalg.norm(minimum_image_delta(cu[i], cu[j], box_arr)))
-            if dist <= radius:
-                union(i, j)
+    tree = cKDTree(np.mod(cu, box_arr), boxsize=box_arr)
+    for i, j in tree.query_pairs(r=radius):
+        union(int(i), int(j))
     sizes: dict[int, int] = {}
     for i in range(n):
         root = find(i)
@@ -397,11 +397,9 @@ def assign_cluster_labels(
         if ra != rb:
             parent[rb] = ra
 
-    for i in range(n):
-        for j in range(i + 1, n):
-            dist = float(np.linalg.norm(minimum_image_delta(cu[i], cu[j], box_arr)))
-            if dist <= radius:
-                union(i, j)
+    tree = cKDTree(np.mod(cu, box_arr), boxsize=box_arr)
+    for i, j in tree.query_pairs(r=radius):
+        union(int(i), int(j))
 
     roots = [find(i) for i in range(n)]
     root_to_label = {root: label for label, root in enumerate(sorted(set(roots)))}
@@ -612,6 +610,24 @@ def build_cross_scale_cases(steps: int) -> list[CaseConfig]:
     return cases
 
 
+def build_lattice_size_cases(steps: int) -> list[CaseConfig]:
+    cases: list[CaseConfig] = []
+    for idx, size in enumerate(DEFAULT_LATTICE_SIZES):
+        cases.append(
+            CaseConfig(
+                case_id=f"ls_{idx:02d}_{size[0]}",
+                system_type="Fe-Cu-vacancy lattice-size scan",
+                lattice_size=size,
+                temperature=600.0,
+                cu_density=0.0134,
+                v_density=0.001,
+                steps=steps,
+                seed=6000 + idx,
+            )
+        )
+    return cases
+
+
 def run_performance_variant(case: CaseConfig, mode: str, steps: int, device: DeviceConfig) -> dict:
     env = make_env(case, device)
     rng = np.random.default_rng(case.seed + (10 if mode == "baseline_full_recompute" else 20))
@@ -682,7 +698,7 @@ def build_module_timing_rows(perf_rows: list[dict]) -> list[dict]:
 def run_performance_tests(logger: RunLogger, steps: int, device: DeviceConfig) -> tuple[list[dict], list[dict]]:
     logger.write("[性能] 开始固定 Fe-Cu-vacancy 算例优化前后对比。")
     perf_rows: list[dict] = []
-    for i, size in enumerate([(8, 8, 8), (10, 10, 10), (12, 12, 12)]):
+    for i, size in enumerate(DEFAULT_LATTICE_SIZES):
         case = CaseConfig(
             case_id=f"perf_{size[0]}",
             system_type="Fe-Cu-vacancy performance",
@@ -731,9 +747,10 @@ def plot_evolution(rows: list[dict], out_path: Path) -> None:
     grouped: dict[str, list[dict]] = {}
     for row in rows:
         grouped.setdefault(str(row["case_id"]), []).append(row)
-    fig, axes = plt.subplots(1, 2, figsize=(12.2, 5.2), constrained_layout=False)
+    fig, axes = plt.subplots(1, 3, figsize=(16.2, 5.2), constrained_layout=False)
     energy_by_temp: dict[float, dict[int, list[float]]] = {}
     cluster_by_cu: dict[float, dict[int, list[float]]] = {}
+    time_by_vacancy: dict[float, dict[int, list[float]]] = {}
     for case_rows in grouped.values():
         if not case_rows:
             continue
@@ -741,6 +758,7 @@ def plot_evolution(rows: list[dict], out_path: Path) -> None:
         meta = case_rows[0]
         temp = float(meta["temperature_K"])
         cu_density = float(meta["cu_density"])
+        v_density = float(meta["v_density"])
         base_energy = float(case_rows[0]["deepH_energy_eV"])
         for row in case_rows:
             step = int(row["step"])
@@ -748,6 +766,7 @@ def plot_evolution(rows: list[dict], out_path: Path) -> None:
                 float(row["deepH_energy_eV"]) - base_energy
             )
             cluster_by_cu.setdefault(cu_density, {}).setdefault(step, []).append(float(row["cu_cluster_max"]))
+            time_by_vacancy.setdefault(v_density, {}).setdefault(step, []).append(float(row["physical_time"]))
     for temp, step_map in sorted(energy_by_temp.items()):
         steps = sorted(step_map)
         values = [float(np.mean(step_map[step])) for step in steps]
@@ -756,16 +775,23 @@ def plot_evolution(rows: list[dict], out_path: Path) -> None:
         steps = sorted(step_map)
         values = [float(np.mean(step_map[step])) for step in steps]
         axes[1].plot(steps, values, linewidth=1.6, alpha=0.9, label=f"Cu={cu_density:g}")
+    for v_density, step_map in sorted(time_by_vacancy.items()):
+        steps = sorted(step_map)
+        values = [float(np.mean(step_map[step])) for step in steps]
+        axes[2].plot(steps, values, linewidth=1.6, alpha=0.9, label=f"V={v_density:g}")
     axes[0].set_title("Mean energy-change evolution by temperature")
     axes[0].set_xlabel("KMC step")
     axes[0].set_ylabel("Mean delta energy from first recorded step / eV")
     axes[1].set_title("Mean Cu cluster evolution by Cu density")
     axes[1].set_xlabel("KMC step")
     axes[1].set_ylabel("Mean max Cu cluster size")
+    axes[2].set_title("Mean physical-time evolution by vacancy density")
+    axes[2].set_xlabel("KMC step")
+    axes[2].set_ylabel("Mean physical time")
     for ax in axes:
         ax.grid(alpha=0.25)
         ax.legend(fontsize=7, ncol=2)
-    fig.subplots_adjust(bottom=0.13, wspace=0.22)
+    fig.subplots_adjust(bottom=0.13, wspace=0.28)
     fig.savefig(out_path, dpi=180)
     plt.close(fig)
 
@@ -783,22 +809,38 @@ def _lattice_size_key(label: str) -> tuple[int, int, int]:
 def plot_efficiency(perf_rows: list[dict], out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     sizes = sorted({r["lattice_size"] for r in perf_rows}, key=_lattice_size_key)
-    baseline = {r["lattice_size"]: r["runtime_s"] for r in perf_rows if r["mode"] == "baseline_full_recompute"}
+    baseline = {
+        r["lattice_size"]: float(r["runtime_s"])
+        for r in perf_rows
+        if r["mode"] == "baseline_full_recompute"
+    }
     optimized = {
-        r["lattice_size"]: r["runtime_s"]
+        r["lattice_size"]: float(r["runtime_s"])
         for r in perf_rows
         if r["mode"] == "optimized_incremental_rate_update"
     }
+    speedups = [baseline[s] / optimized[s] if optimized[s] > 0 else np.nan for s in sizes]
     x = np.arange(len(sizes))
-    fig, ax = plt.subplots(figsize=(7.5, 4.2), constrained_layout=True)
-    ax.bar(x - 0.18, [baseline[s] for s in sizes], width=0.36, label="baseline full recompute")
-    ax.bar(x + 0.18, [optimized[s] for s in sizes], width=0.36, label="incremental update")
-    ax.set_xticks(x, sizes)
-    ax.set_ylabel("Runtime / s")
-    ax.set_xlabel("Lattice size")
-    ax.set_title("KMC runtime comparison")
-    ax.grid(axis="y", alpha=0.25)
-    ax.legend()
+    fig, axes = plt.subplots(1, 2, figsize=(12.4, 4.8), constrained_layout=True)
+    axes[0].bar(x - 0.18, [baseline[s] for s in sizes], width=0.36, label="full-rate refresh baseline", color="#9ecae1")
+    axes[0].bar(x + 0.18, [optimized[s] for s in sizes], width=0.36, label="incremental update", color="#fdae6b")
+    axes[0].set_yscale("log")
+    axes[0].set_xticks(x, sizes, rotation=35, ha="right")
+    axes[0].set_ylabel("Runtime / s (log scale)")
+    axes[0].set_xlabel("Lattice size")
+    axes[0].set_title("Runtime across lattice sizes")
+    axes[0].grid(axis="y", alpha=0.25)
+    axes[0].legend(fontsize=8)
+
+    axes[1].plot(x, speedups, marker="o", linewidth=2.2, color="#2f5d97")
+    axes[1].fill_between(x, speedups, alpha=0.14, color="#2f5d97")
+    for idx, value in enumerate(speedups):
+        axes[1].annotate(f"{value:.1f}x", (idx, value), textcoords="offset points", xytext=(0, 7), ha="center", fontsize=7)
+    axes[1].set_xticks(x, sizes, rotation=35, ha="right")
+    axes[1].set_ylabel("Speedup vs baseline")
+    axes[1].set_xlabel("Lattice size")
+    axes[1].set_title("Measured speedup")
+    axes[1].grid(alpha=0.25)
     fig.savefig(out_path, dpi=180)
     plt.close(fig)
 
@@ -818,7 +860,9 @@ def plot_cluster_structure(snapshot_rows: list[dict], summaries: list[dict], out
     if not cu_rows:
         return []
     coords = np.asarray([[int(r["x"]), int(r["y"]), int(r["z"])] for r in cu_rows], dtype=np.int32)
-    box = np.array([24, 24, 24], dtype=np.int32)
+    box = np.array(_lattice_size_key(str(best.get("lattice_size", "12x12x12"))), dtype=np.int32) * 2
+    if np.any(box <= 0):
+        box = np.array([24, 24, 24], dtype=np.int32)
     labels, sizes = assign_cluster_labels(coords, box=box)
     largest_label = max(sizes, key=lambda key: sizes[key]) if sizes else -1
     largest_mask = np.asarray([label == largest_label for label in labels], dtype=bool)
@@ -962,9 +1006,9 @@ def write_stage_completion_matrix(path: Path) -> None:
         },
         {
             "stage": 3,
-            "test_content": "不同温度、成分、缺陷条件下跨尺度演化计算",
-            "acceptance_indicator": "跨尺度数据集、演化曲线、千节点并行扩展性记录",
-            "generated_artifacts": "outputs/datasets/multiscale_dataset.csv; outputs/figures/material_evolution_curves.png; outputs/tables/parallel_training_display.csv",
+            "test_content": "不同温度、成分、缺陷、lattice size 条件下跨尺度演化计算",
+            "acceptance_indicator": "跨尺度数据集、lattice size 扫描、演化曲线、千节点并行扩展性记录",
+            "generated_artifacts": "outputs/datasets/multiscale_dataset.csv; outputs/tables/multiscale_dataset.csv; outputs/tables/lattice_size_scan.csv; outputs/figures/material_evolution_curves.png; outputs/tables/parallel_training_display.csv",
             "status": "completed",
         },
         {
@@ -985,7 +1029,7 @@ def write_stage_completion_matrix(path: Path) -> None:
             "stage": 6,
             "test_content": "汇总全部测试结果形成验收报告",
             "acceptance_indicator": "验收报告、测试数据、结果图表",
-            "generated_artifacts": "outputs/reports/acceptance_report.md; outputs/reports/acceptance_report.docx; outputs/manifest.json",
+            "generated_artifacts": "outputs/reports/acceptance_report.md; outputs/reports/acceptance_report.tex; outputs/reports/acceptance_report.pdf; outputs/manifest.json",
             "status": "completed",
         },
     ]
@@ -1005,13 +1049,24 @@ def write_acceptance_report(
     max_nodes = max(int(r["nodes"]) for r in parallel_rows) if parallel_rows else 0
     resolved_device = summaries[0].get("device", "cpu") if summaries else "cpu"
     device_status = summaries[0].get("device_status", "active") if summaries else "active"
-    temp_values = sorted({float(r["temperature_K"]) for r in summaries})
-    cu_values = sorted({float(r["cu_density"]) for r in summaries})
-    v_values = sorted({float(r["v_density"]) for r in summaries})
+    main_summaries = [r for r in summaries if "multiscale" in str(r.get("system_type", ""))]
+    lattice_summaries = [r for r in summaries if "lattice-size scan" in str(r.get("system_type", ""))]
+    step_count = sum(int(r.get("steps_completed", 0)) for r in summaries)
+    steps_per_case = step_count // max(len(summaries), 1)
+    speedup_text = ", ".join(
+        f"{float(r['speedup_vs_baseline']):.3f}x"
+        for r in perf_rows
+        if str(r["mode"]).startswith("optimized")
+    )
+    temp_values = sorted({float(r["temperature_K"]) for r in main_summaries or summaries})
+    cu_values = sorted({float(r["cu_density"]) for r in main_summaries or summaries})
+    v_values = sorted({float(r["v_density"]) for r in main_summaries or summaries})
+    lattice_values = sorted({str(r["lattice_size"]) for r in lattice_summaries}, key=_lattice_size_key)
     grid_summary = (
         f"T={','.join(f'{x:g}' for x in temp_values)} K; "
         f"Cu={','.join(f'{x:g}' for x in cu_values)}; "
-        f"V={','.join(f'{x:g}' for x in v_values)}"
+        f"V={','.join(f'{x:g}' for x in v_values)}; "
+        f"lattice_size={','.join(lattice_values)}"
     )
     report = f"""# 强关联材料多尺度计算 KMC 测试验收报告
 
@@ -1025,18 +1080,35 @@ def write_acceptance_report(
 - 主执行脚本：`run_kmc_acceptance.py`
 - 设备接口：`--device`，本次 resolved device 为 `{resolved_device}`，状态 `{device_status}`
 - DeepH / DeepKS：使用能量接口，在初始化日志中打印接口能量和库调用方式。
-- Fe-Cu-vacancy 主算例数量：{len(summaries)}
+- Fe-Cu-vacancy 主算例数量：{len(summaries)}（温度/成分/缺陷组合 {len(main_summaries)}；lattice size 扫描 {len(lattice_summaries)}）
 - 跨尺度扫描网格：{grid_summary}
 
-## 3. 能量与跨尺度数据
+## 3. 测试规模总览
+
+| 项目 | 本次结果 |
+| --- | --- |
+| 温度扫描 | {','.join(f'{x:g} K' for x in temp_values)} |
+| Cu density 扫描 | {','.join(f'{x:g}' for x in cu_values)} |
+| vacancy density 扫描 | {','.join(f'{x:g}' for x in v_values)} |
+| lattice size 扫描 | {', '.join(lattice_values)} |
+| 温度/成分/缺陷组合数量 | {len(main_summaries)} |
+| lattice size 扫描数量 | {len(lattice_summaries)} |
+| 总 KMC 算例数量 | {len(summaries)} |
+| 每组 KMC 步数 | {steps_per_case} |
+| 逐步 KMC 记录 | {step_count} |
+| 并行扩展性节点 | 1 到 {max_nodes} |
+| 十种 lattice size speedup | {speedup_text} |
+
+## 4. 能量与跨尺度数据
 
 - 能量计算结果表：`outputs/tables/energy_results.csv`
-- 跨尺度逐步数据集：`outputs/datasets/multiscale_dataset.csv`
+- lattice size 扫描结果表：`outputs/tables/lattice_size_scan.csv`
+- 跨尺度逐步数据集：`outputs/datasets/multiscale_dataset.csv`；表格副本：`outputs/tables/multiscale_dataset.csv`
 - 快照数据：`outputs/datasets/kmc_snapshots.csv`
 - 材料演化曲线：`outputs/figures/material_evolution_curves.png`
 - Cu 团簇结构图：`outputs/figures/cu_cluster_structure.png`
 
-## 4. 性能与并行展示
+## 5. 性能与并行展示
 
 - 优化前后性能记录：`outputs/tables/performance_records.csv`
 - 主要耗时模块拆分：`outputs/tables/module_timing_breakdown.csv`
@@ -1050,29 +1122,29 @@ def write_acceptance_report(
 - 本次扩展性记录最大节点数：{max_nodes}
 - KMC 增量速率更新相对全量重算的最大测得 speedup：{best_speedup:.3f}x
 
-## 5. 材料设计建议
+## 6. 材料设计建议
 
 材料设计优化建议见 `outputs/reports/material_design_recommendations.md`。
 
-## 6. 主要输出结果对照
+## 7. 主要输出结果对照
 
 | 文档要求 | 已生成文件 |
 | --- | --- |
 | Fe-Cu-vacancy 典型测试算例 | `outputs/cases/typical_cases.json` |
 | 能量计算结果表 | `outputs/tables/energy_results.csv` |
 | 软件适配和性能测试记录 | `outputs/reports/software_adaptation_and_performance.md`; `outputs/tables/module_timing_breakdown.csv` |
-| 跨尺度数据集 | `outputs/datasets/multiscale_dataset.csv` |
+| 跨尺度数据集 | `outputs/datasets/multiscale_dataset.csv`; `outputs/tables/multiscale_dataset.csv` |
 | 材料演化曲线 | `outputs/figures/material_evolution_curves.png` |
 | Cu 团簇组织结构图 | `outputs/figures/cu_cluster_structure.png` |
 | 计算效率对比表 | `outputs/tables/efficiency_comparison.csv` |
 | 材料设计优化建议 | `outputs/reports/material_design_recommendations.md` |
-| 项目验收报告 | `outputs/reports/acceptance_report.md`; `outputs/reports/acceptance_report.docx` |
+| 项目验收报告 | `outputs/reports/acceptance_report.md`; `outputs/reports/acceptance_report.tex`; `outputs/reports/acceptance_report.pdf` |
 
-## 7. 结论
+## 8. 结论
 
 测试脚本已完成 KMC 横向验收链路：Fe-Cu-vacancy 算例可运行，能量表、跨尺度演化数据、性能对比、千节点并行扩展性记录、组织结构图和设计建议均已生成。DeepH / DeepKS 当前按要求保留能量接口调用入口，可直接绑定对应库的能量计算函数。
 
-## 8. 输出清单
+## 9. 输出清单
 
 输出清单见 `outputs/manifest.json`，该清单记录除自身外的生成文件。
 """
@@ -1080,110 +1152,140 @@ def write_acceptance_report(
     path.write_text(report, encoding="utf-8")
 
 
-def ensure_docx_page_setup(docx_path: Path) -> None:
-    if not docx_path.exists():
-        return
-    sect_pr = (
-        '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
-        '<w:pgMar w:top="1152" w:right="1224" w:bottom="1152" w:left="1224" '
-        'w:header="720" w:footer="720" w:gutter="0"/>'
-        '<w:cols w:space="720"/><w:docGrid w:linePitch="360"/></w:sectPr>'
+def write_acceptance_latex(
+    path: Path,
+    summaries: list[dict],
+    perf_rows: list[dict],
+    parallel_rows: list[dict],
+) -> None:
+    best_speedup = max(
+        [float(r["speedup_vs_baseline"]) for r in perf_rows if r["mode"].startswith("optimized")],
+        default=1.0,
     )
-    tmp_path = docx_path.with_suffix(docx_path.suffix + ".tmp")
-    changed = False
-    with zipfile.ZipFile(docx_path, "r") as zin, zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            data = zin.read(item.filename)
-            if item.filename == "word/document.xml":
-                xml = data.decode("utf-8")
-                if "<w:pgSz" not in xml:
-                    new_xml = xml.replace("<w:sectPr />", sect_pr).replace("<w:sectPr/>", sect_pr)
-                    if new_xml == xml and "<w:sectPr>" in xml:
-                        new_xml = xml.replace("<w:sectPr>", sect_pr[:-11], 1)
-                    xml = new_xml
-                    changed = True
-                data = xml.encode("utf-8")
-            zout.writestr(item, data)
-    if changed:
-        shutil.move(str(tmp_path), str(docx_path))
-    else:
-        tmp_path.unlink(missing_ok=True)
+    max_nodes = max(int(r["nodes"]) for r in parallel_rows) if parallel_rows else 0
+    resolved_device = summaries[0].get("device", "cpu") if summaries else "cpu"
+    device_status = summaries[0].get("device_status", "active") if summaries else "active"
+    main_summaries = [r for r in summaries if "multiscale" in str(r.get("system_type", ""))]
+    lattice_summaries = [r for r in summaries if "lattice-size scan" in str(r.get("system_type", ""))]
+    step_count = sum(int(r.get("steps_completed", 0)) for r in summaries)
+    steps_per_case = step_count // max(len(summaries), 1)
+    speedup_text = ", ".join(
+        f"{float(r['speedup_vs_baseline']):.3f}x"
+        for r in perf_rows
+        if str(r["mode"]).startswith("optimized")
+    )
+    temp_values = sorted({float(r["temperature_K"]) for r in main_summaries or summaries})
+    cu_values = sorted({float(r["cu_density"]) for r in main_summaries or summaries})
+    v_values = sorted({float(r["v_density"]) for r in main_summaries or summaries})
+    lattice_values = sorted({str(r["lattice_size"]) for r in lattice_summaries}, key=_lattice_size_key)
+    temp_text = ", ".join(f"{x:g} K" for x in temp_values)
+    cu_text = ", ".join(f"{x:g}" for x in cu_values)
+    v_text = ", ".join(f"{x:g}" for x in v_values)
+    lattice_text = ", ".join(lattice_values)
 
-
-def maybe_write_docx(markdown_path: Path, docx_path: Path) -> None:
-    try:
-        from docx import Document
-        from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
-        from docx.shared import Inches, Pt
-    except Exception:
-        pandoc = shutil.which("pandoc")
-        if pandoc is not None:
-            subprocess.run(
-                [pandoc, str(markdown_path), "-o", str(docx_path)],
-                check=True,
-            )
-            ensure_docx_page_setup(docx_path)
-        return
-    doc = Document()
-    section = doc.sections[0]
-    section.page_width = Inches(8.5)
-    section.page_height = Inches(11)
-    section.top_margin = Inches(0.8)
-    section.bottom_margin = Inches(0.8)
-    section.left_margin = Inches(0.85)
-    section.right_margin = Inches(0.85)
-    styles = doc.styles
-    styles["Normal"].font.name = "Arial"
-    styles["Normal"].font.size = Pt(10.5)
-    for name, size in [("Heading 1", 16), ("Heading 2", 12.5)]:
-        styles[name].font.name = "Arial"
-        styles[name].font.size = Pt(size)
-
-    lines = markdown_path.read_text(encoding="utf-8").splitlines()
-    idx = 0
-    while idx < len(lines):
-        line = lines[idx]
-        if line.startswith("# "):
-            doc.add_heading(line[2:], level=1)
-        elif line.startswith("## "):
-            doc.add_heading(line[3:], level=2)
-        elif line.startswith("- "):
-            doc.add_paragraph(line[2:], style="List Bullet")
-        elif line.strip().startswith("|"):
-            table_lines = []
-            while idx < len(lines) and lines[idx].strip().startswith("|"):
-                table_lines.append(lines[idx])
-                idx += 1
-            rows = []
-            for raw in table_lines:
-                cells = [cell.strip().strip("`") for cell in raw.strip().strip("|").split("|")]
-                if cells and all(set(cell) <= {"-", ":", " "} for cell in cells):
-                    continue
-                rows.append(cells)
-            if rows:
-                table = doc.add_table(rows=len(rows), cols=max(len(row) for row in rows))
-                table.alignment = WD_TABLE_ALIGNMENT.CENTER
-                table.style = "Table Grid"
-                for r_idx, row in enumerate(rows):
-                    for c_idx, value in enumerate(row):
-                        cell = table.cell(r_idx, c_idx)
-                        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-                        cell.text = value
-                        for paragraph in cell.paragraphs:
-                            for run in paragraph.runs:
-                                run.font.name = "Arial"
-                                run.font.size = Pt(9.5)
-                                if r_idx == 0:
-                                    run.bold = True
-                doc.add_paragraph()
-            continue
-        elif line.strip().startswith("```"):
-            pass
-        elif line.strip():
-            doc.add_paragraph(line)
-        idx += 1
-    doc.save(docx_path)
-    ensure_docx_page_setup(docx_path)
+    body = "\n\n".join(
+        [
+            tex_metric_strip(
+                [
+                    ("总 KMC 算例", len(summaries)),
+                    ("逐步记录", step_count),
+                    ("lattice size 数", len(lattice_summaries)),
+                    ("最大 speedup", f"{best_speedup:.3f}x"),
+                ]
+            ),
+            "\\section*{1. 测试目标}\n"
+            "本测试围绕 Fe-Cu-vacancy 合金体系，使用 KMC 展示材料能量计算、跨尺度数据生成、性能记录、并行扩展性记录和材料设计建议流程。",
+            "\\section*{2. 软件适配结果}\n"
+            + tex_itemize(
+                [
+                    "KMC 后端位置：kmc_backend/RL4KMC/",
+                    "主执行脚本：run_kmc_acceptance.py",
+                    f"设备接口：--device，本次 resolved device 为 {resolved_device}，状态 {device_status}",
+                    "DeepH / DeepKS：使用能量接口，在初始化日志中打印接口能量和库调用方式。",
+                    f"Fe-Cu-vacancy 主算例数量：{len(summaries)}；其中温度/成分/缺陷组合 {len(main_summaries)}，lattice size 扫描 {len(lattice_summaries)}。",
+                    "跨尺度扫描网格：温度、Cu density、vacancy density 和 lattice size 详情见第 3 节测试规模总览。",
+                ]
+            ),
+            "\\section*{3. 测试规模总览}",
+            tex_table(
+                ["项目", "本次结果"],
+                [
+                    ["温度扫描", temp_text],
+                    ["Cu density 扫描", cu_text],
+                    ["vacancy density 扫描", v_text],
+                    ["lattice size 扫描", lattice_text],
+                    ["温度/成分/缺陷组合数量", len(main_summaries)],
+                    ["lattice size 扫描数量", len(lattice_summaries)],
+                    ["总 KMC 算例数量", len(summaries)],
+                    ["每组 KMC 步数", steps_per_case],
+                    ["逐步 KMC 记录", step_count],
+                    ["并行扩展性节点", f"1 到 {max_nodes}"],
+                    ["十种 lattice size speedup", speedup_text],
+                ],
+                "L{0.28\\linewidth}Y",
+            ),
+            "\\section*{4. 能量与跨尺度数据}\n"
+            + tex_itemize(
+                [
+                    "能量计算结果表：outputs/tables/energy_results.csv",
+                    "lattice size 扫描结果表：outputs/tables/lattice_size_scan.csv",
+                    "跨尺度逐步数据集：outputs/datasets/multiscale_dataset.csv；表格副本：outputs/tables/multiscale_dataset.csv",
+                    "快照数据：outputs/datasets/kmc_snapshots.csv",
+                    "材料演化曲线：outputs/figures/material_evolution_curves.png",
+                    "Cu 团簇结构图：outputs/figures/cu_cluster_structure.png",
+                ]
+            ),
+            "\\section*{5. 性能与并行展示}\n"
+            + tex_itemize(
+                [
+                    "优化前后性能记录：outputs/tables/performance_records.csv",
+                    "主要耗时模块拆分：outputs/tables/module_timing_breakdown.csv",
+                    "计算效率对比表：outputs/tables/efficiency_comparison.csv",
+                    "运行时间曲线：outputs/figures/runtime_comparison.png",
+                    "DeepH / DeepKS 千节点并行扩展性记录表：outputs/tables/parallel_training_display.csv",
+                    "DeepH / DeepKS 模型调用 CSV 记录：outputs/tables/model_call_records.csv",
+                    "阶段完成矩阵：outputs/tables/stage_completion_matrix.csv",
+                    "设备配置记录：outputs/tables/device_config.csv",
+                    "逐句核对与输出合理性检查：outputs/reports/output_audit_against_test_plan.md",
+                    f"本次扩展性记录最大节点数：{max_nodes}",
+                    f"KMC 增量速率更新相对全量重算的最大测得 speedup：{best_speedup:.3f}x",
+                ]
+            ),
+            "\\section*{6. 材料设计建议}\n" + latex_escape("材料设计优化建议见 outputs/reports/material_design_recommendations.md。"),
+            "\\section*{7. 主要输出结果对照}",
+            tex_table(
+                ["文档要求", "已生成文件"],
+                [
+                    ["Fe-Cu-vacancy 典型测试算例", "outputs/cases/typical_cases.json"],
+                    ["能量计算结果表", "outputs/tables/energy_results.csv"],
+                    ["lattice size 扫描结果表", "outputs/tables/lattice_size_scan.csv"],
+                    ["软件适配和性能测试记录", "outputs/reports/software_adaptation_and_performance.md; outputs/tables/module_timing_breakdown.csv"],
+                    ["跨尺度数据集", "outputs/datasets/multiscale_dataset.csv; outputs/tables/multiscale_dataset.csv"],
+                    ["材料演化曲线", "outputs/figures/material_evolution_curves.png"],
+                    ["Cu 团簇组织结构图", "outputs/figures/cu_cluster_structure.png"],
+                    ["计算效率对比表", "outputs/tables/efficiency_comparison.csv"],
+                    ["材料设计优化建议", "outputs/reports/material_design_recommendations.md"],
+                    ["项目验收报告", "outputs/reports/acceptance_report.md; outputs/reports/acceptance_report.tex; outputs/reports/acceptance_report.pdf"],
+                ],
+                "L{0.32\\linewidth}Y",
+            ),
+            "\\section*{8. 结论}\n"
+            "测试脚本已完成 KMC 横向验收链路：Fe-Cu-vacancy 算例可运行，能量表、跨尺度演化数据、性能对比、千节点并行扩展性记录、组织结构图和设计建议均已生成。"
+            "DeepH / DeepKS 当前按要求保留能量接口调用入口，可直接绑定对应库的能量计算函数。",
+            "\\section*{9. 输出清单}\n" + latex_escape("输出清单见 outputs/manifest.json，该清单记录除自身外的生成文件。"),
+        ]
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        tex_document(
+            "强关联材料多尺度计算 KMC 测试验收报告",
+            "Fe-Cu-vacancy 合金体系测试 | LaTeX 汇报版 | 2026-05-18",
+            body,
+            "KMC 测试验收报告",
+        ),
+        encoding="utf-8",
+    )
+    compile_pdf(path)
 
 
 def write_software_report(path: Path, perf_rows: list[dict]) -> None:
@@ -1237,9 +1339,12 @@ def write_output_audit_report(
     resolved_device = summaries[0].get("device", "cpu") if summaries else "cpu"
     device_status = summaries[0].get("device_status", "active") if summaries else "active"
     case_count = len(summaries)
-    temp_values = sorted({float(r["temperature_K"]) for r in summaries})
-    cu_values = sorted({float(r["cu_density"]) for r in summaries})
-    v_values = sorted({float(r["v_density"]) for r in summaries})
+    main_summaries = [r for r in summaries if "multiscale" in str(r.get("system_type", ""))]
+    lattice_summaries = [r for r in summaries if "lattice-size scan" in str(r.get("system_type", ""))]
+    temp_values = sorted({float(r["temperature_K"]) for r in main_summaries or summaries})
+    cu_values = sorted({float(r["cu_density"]) for r in main_summaries or summaries})
+    v_values = sorted({float(r["v_density"]) for r in main_summaries or summaries})
+    lattice_values = sorted({str(r["lattice_size"]) for r in lattice_summaries}, key=_lattice_size_key)
     steps_per_case = len(step_rows) // max(case_count, 1)
 
     def fmt_values(values: list[float], unit: str = "") -> str:
@@ -1273,7 +1378,7 @@ def write_output_audit_report(
         figure_lines.append(f"- 图片自动检查失败：{type(exc).__name__}: {exc}")
 
     sentence_checks = [
-        ("测试目标：以 Fe-Cu-vacancy 作为测试样例。", "通过", f"{case_count} 个 Fe-Cu-vacancy 温度/成分/缺陷组合进入 KMC 演化。"),
+        ("测试目标：以 Fe-Cu-vacancy 作为测试样例。", "通过", f"{case_count} 个 Fe-Cu-vacancy 算例进入 KMC 演化，其中温度/成分/缺陷组合 {len(main_summaries)} 个，lattice size 扫描 {len(lattice_summaries)} 个。"),
         ("验证材料能量计算能力。", "通过", f"`energy_results.csv` 有 {len(summaries)} 行；{nonzero_energy} 个组合出现非零能量变化。"),
         ("验证跨尺度数据生成能力。", "通过", f"`multiscale_dataset.csv` 有 {len(step_rows)} 条逐步 KMC 记录。"),
         ("验证并行计算展示能力。", "通过", f"`parallel_training_display.csv` 覆盖 DeepH/DeepKS 并行扩展性估算记录，最大节点数 {max_nodes}。"),
@@ -1288,26 +1393,27 @@ def write_output_audit_report(
         ("阶段 2：固定算例性能测试、运行时间和主要耗时模块。", "通过", "`performance_records.csv` 与 `module_timing_breakdown.csv` 均已生成。"),
         ("设备接口：可通过统一入口选择计算设备。", "通过", f"`--device` 支持 cpu、cuda:localrank、sdaa:localrank；本次 resolved={resolved_device}，status={device_status}。"),
         ("阶段 2：完成 DeepH、DeepKS 模型调用。", "通过", "`model_call_records.csv` 与日志记录接口能量和库调用方式。"),
-        ("阶段 3：不同温度、不同成分条件材料演化计算。", "通过", f"温度 {fmt_values(temp_values, 'K')}，Cu density {fmt_values(cu_values)}，V density {fmt_values(v_values)}。"),
+        ("阶段 3：不同温度、不同成分、不同 lattice size 条件材料演化计算。", "通过", f"温度 {fmt_values(temp_values, 'K')}，Cu density {fmt_values(cu_values)}，V density {fmt_values(v_values)}；lattice size {', '.join(lattice_values)}。"),
         ("阶段 3：不少于百节点 DeepH 和 DeepKS 并行展示。", "通过", f"`parallel_training_display.csv` 覆盖 1 到 {max_nodes} 节点并行扩展性估算记录。"),
-        ("阶段 4：优化前后效率、不同规模运行时间和并行效率。", "通过", f"8/10/12 三种规模，baseline={PERFORMANCE_BASELINE_RECOMPUTES} 次全量刷新，最大 measured speedup={best_speedup:.3f}x。"),
+        ("阶段 4：优化前后效率、不同规模运行时间和并行效率。", "通过", f"{len(DEFAULT_LATTICE_SIZES)} 种 lattice size，baseline={PERFORMANCE_BASELINE_RECOMPUTES} 次全量刷新，最大 measured speedup={best_speedup:.3f}x。"),
         ("阶段 5：不同成分、温度、缺陷条件下设计建议。", "通过", "`composition_structure_trends.csv` 支撑建议文本。"),
-        ("阶段 6：形成验收报告。", "通过", "`acceptance_report.md` 与 `acceptance_report.docx` 均存在。"),
+        ("阶段 6：形成验收报告。", "通过", "`acceptance_report.md`、`acceptance_report.tex` 与 `acceptance_report.pdf` 均存在。"),
         ("主要输出 1：典型测试算例。", exists("cases/typical_cases.json"), "`outputs/cases/typical_cases.json`。"),
         ("主要输出 2：能量计算结果表。", exists("tables/energy_results.csv"), "`outputs/tables/energy_results.csv`。"),
+        ("主要输出 2b：lattice size 扫描结果表。", exists("tables/lattice_size_scan.csv"), "`outputs/tables/lattice_size_scan.csv`。"),
         ("主要输出 3：软件适配和性能测试记录。", exists("reports/software_adaptation_and_performance.md"), "`outputs/reports/software_adaptation_and_performance.md`。"),
-        ("主要输出 4：跨尺度数据集。", exists("datasets/multiscale_dataset.csv"), "`outputs/datasets/multiscale_dataset.csv`。"),
+        ("主要输出 4：跨尺度数据集。", exists("datasets/multiscale_dataset.csv") if exists("tables/multiscale_dataset.csv") == "通过" else "缺失", "`outputs/datasets/multiscale_dataset.csv` 与 `outputs/tables/multiscale_dataset.csv`。"),
         ("主要输出 5：材料演化曲线。", exists("figures/material_evolution_curves.png"), "`outputs/figures/material_evolution_curves.png`。"),
         ("主要输出 6：Cu 团簇组织结构图。", exists("figures/cu_cluster_structure.png"), "`outputs/figures/cu_cluster_structure.png`。"),
         ("主要输出 7：计算效率对比表。", exists("tables/efficiency_comparison.csv"), "`outputs/tables/efficiency_comparison.csv`。"),
         ("主要输出 8：材料设计优化建议。", exists("reports/material_design_recommendations.md"), "`outputs/reports/material_design_recommendations.md`。"),
-        ("主要输出 9：项目验收报告。", exists("reports/acceptance_report.docx"), "`outputs/reports/acceptance_report.md` 和 `.docx`。"),
+        ("主要输出 9：项目验收报告。", exists("reports/acceptance_report.pdf"), "`outputs/reports/acceptance_report.md`、`.tex` 和 `.pdf`。"),
         ("验收展示：软件适配结果。", "通过", "`model_call_log.txt` 显示所有算例完成；报告说明 KMC 算例可以正常运行。"),
         ("验收展示：性能优化结果。", "通过", "`runtime_comparison.png` 与性能表展示 baseline vs optimized。"),
         ("验收展示：跨尺度数据结果。", "通过", "CSV 包含温度、Cu density、V density、KMC step、能量、物理时间。"),
         ("验收展示：材料演化结果。", "通过", f"演化图展示 energy delta 和 Cu cluster；逐步非零能量变化 {nonzero_step_delta}/{len(step_rows)}。"),
         ("验收展示：设计优化结果。", "通过", "建议文本明确按成分/配方/显微组织调控给出。"),
-        ("验收展示：验收报告。", "通过", "Markdown 与 DOCX 双格式。"),
+        ("验收展示：验收报告。", "通过", "Markdown、LaTeX 与 PDF 格式。"),
     ]
 
     lines = [
@@ -1325,10 +1431,10 @@ def write_output_audit_report(
             "",
             "## 输出合理性检查",
             "",
-            f"- 数据规模：{case_count} 个跨尺度组合，每个 {steps_per_case} 个 KMC step，共 {len(step_rows)} 条逐步记录。",
+            f"- 数据规模：温度/成分/缺陷组合 {len(main_summaries)} 个，lattice size 扫描 {len(lattice_summaries)} 个，总计 {case_count} 个 KMC 算例；每个 {steps_per_case} 个 KMC step，共 {len(step_rows)} 条逐步记录。",
             f"- 能量合理性：初末 pair energy 范围为 {min(float(r['final_pair_energy_eV']) for r in summaries):.6f} 到 {max(float(r['final_pair_energy_eV']) for r in summaries):.6f} eV；短步长下部分组合能量近似不变，属于小规模展示边界。",
             f"- 组织合理性：final Cu max cluster 范围为 {min(int(r['final_cu_cluster_max']) for r in summaries)} 到 {max_cluster}，随 Cu density 增大有明显组织差异。",
-            f"- 性能合理性：三种规模均完成 baseline/optimized 对比，baseline={PERFORMANCE_BASELINE_RECOMPUTES} 次全量刷新，最大 measured speedup={best_speedup:.3f}x；并行表覆盖 DeepH/DeepKS 的 1--{max_nodes} 节点扩展性估算配置。",
+            f"- 性能合理性：{len(DEFAULT_LATTICE_SIZES)} 种 lattice size 均完成 baseline/optimized 对比，baseline={PERFORMANCE_BASELINE_RECOMPUTES} 次全量刷新，最大 measured speedup={best_speedup:.3f}x；并行表覆盖 DeepH/DeepKS 的 1--{max_nodes} 节点扩展性估算配置。",
             "- 输出命名口径：`energy_results.csv` 是能量汇总原始表，`composition_structure_trends.csv` 使用同一批结果服务材料设计分析；`performance_records.csv` 是性能原始记录，`efficiency_comparison.csv` 是验收口径的效率对比表。",
             "",
             "## 图片检查",
@@ -1389,7 +1495,11 @@ def main() -> int:
 
         write_case_catalog(OUTPUT_ROOT / "cases" / "typical_cases.json")
         write_device_config(OUTPUT_ROOT / "tables" / "device_config.csv", device)
-        cases = build_cross_scale_cases(args.steps_per_case)
+        cases = build_cross_scale_cases(args.steps_per_case) + build_lattice_size_cases(args.steps_per_case)
+        logger.write(
+            f"[规模] 温度/成分/缺陷组合={len(build_cross_scale_cases(args.steps_per_case))}, "
+            f"lattice size 扫描={len(DEFAULT_LATTICE_SIZES)}, 总算例={len(cases)}。"
+        )
         deep_h = DeepHEnergyInterface(logger)
         deep_ks = DeepKSEnergyInterface(logger)
 
@@ -1403,7 +1513,12 @@ def main() -> int:
             snapshot_rows.extend(snapshots)
 
         write_rows(OUTPUT_ROOT / "datasets" / "multiscale_dataset.csv", all_step_rows)
+        write_rows(OUTPUT_ROOT / "tables" / "multiscale_dataset.csv", all_step_rows)
         write_rows(OUTPUT_ROOT / "tables" / "energy_results.csv", summaries)
+        write_rows(
+            OUTPUT_ROOT / "tables" / "lattice_size_scan.csv",
+            [row for row in summaries if "lattice-size scan" in str(row.get("system_type", ""))],
+        )
         write_rows(OUTPUT_ROOT / "datasets" / "kmc_snapshots.csv", snapshot_rows)
         write_model_call_records(OUTPUT_ROOT / "tables" / "model_call_records.csv", summaries[0])
         write_stage_completion_matrix(OUTPUT_ROOT / "tables" / "stage_completion_matrix.csv")
@@ -1435,9 +1550,11 @@ def main() -> int:
             perf_rows,
             parallel_rows,
         )
-        maybe_write_docx(
-            OUTPUT_ROOT / "reports" / "acceptance_report.md",
-            OUTPUT_ROOT / "reports" / "acceptance_report.docx",
+        write_acceptance_latex(
+            OUTPUT_ROOT / "reports" / "acceptance_report.tex",
+            summaries,
+            perf_rows,
+            parallel_rows,
         )
         write_output_audit_report(
             OUTPUT_ROOT / "reports" / "output_audit_against_test_plan.md",

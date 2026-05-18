@@ -1,0 +1,149 @@
+\documentclass[UTF8,11pt]{ctexart}
+\usepackage[a4paper,margin=1.65cm]{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{float}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{titlesec}
+\usepackage{url}
+\usepackage[table]{xcolor}
+
+\definecolor{kmcblue}{HTML}{2F5D97}
+\definecolor{kmcdark}{HTML}{1F2D3D}
+\definecolor{kmcmuted}{HTML}{5B6778}
+\definecolor{kmclight}{HTML}{EEF3F8}
+
+\hypersetup{colorlinks=true,linkcolor=kmcblue,urlcolor=kmcblue}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.45em}
+\renewcommand{\arraystretch}{1.18}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\titleformat{\section}{\Large\bfseries\color{kmcblue}}{}{0pt}{}
+\titleformat{\subsection}{\large\bfseries\color{kmcdark}}{}{0pt}{}
+\captionsetup{font=small,labelfont=bf}
+\setlist[itemize]{leftmargin=1.65em,itemsep=0.12em,topsep=0.15em}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\color{kmcmuted}\small KMC 测试验收报告}
+\rhead{\color{kmcmuted}\small \thepage}
+\renewcommand{\headrulewidth}{0.25pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\begin{document}
+
+{\Huge\bfseries\color{kmcblue} 强关联材料多尺度计算 KMC 测试验收报告}\par
+\vspace{0.35em}
+{\large\color{kmcmuted} Fe-Cu-vacancy 合金体系测试 | LaTeX 汇报版 | 2026-05-18}\par
+\vspace{1.0em}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.45}
+\begin{tabularx}{\linewidth}{|Y|Y|Y|Y|}
+\hline
+\centering\arraybackslash {\Large\bfseries\color{kmcblue} 360}\\par{\small\color{kmcmuted} 总 KMC 算例} & \centering\arraybackslash {\Large\bfseries\color{kmcblue} 36000}\\par{\small\color{kmcmuted} 逐步记录} & \centering\arraybackslash {\Large\bfseries\color{kmcblue} 10}\\par{\small\color{kmcmuted} lattice size 数} & \centering\arraybackslash {\Large\bfseries\color{kmcblue} 279.854x}\\par{\small\color{kmcmuted} 最大 speedup} \\
+\hline
+\end{tabularx}
+\end{center}
+
+\section*{1. 测试目标}
+本测试围绕 Fe-Cu-vacancy 合金体系，使用 KMC 展示材料能量计算、跨尺度数据生成、性能记录、并行扩展性记录和材料设计建议流程。
+
+\section*{2. 软件适配结果}
+\begin{itemize}
+\item KMC 后端位置：kmc\_backend/RL4KMC/
+\item 主执行脚本：run\_kmc\_acceptance.py
+\item 设备接口：--device，本次 resolved device 为 cpu，状态 active
+\item DeepH / DeepKS：使用能量接口，在初始化日志中打印接口能量和库调用方式。
+\item Fe-Cu-vacancy 主算例数量：360；其中温度/成分/缺陷组合 350，lattice size 扫描 10。
+\item 跨尺度扫描网格：温度、Cu density、vacancy density 和 lattice size 详情见第 3 节测试规模总览。
+\end{itemize}
+
+\section*{3. 测试规模总览}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.24}
+\begin{tabularx}{\linewidth}{L{0.28\linewidth}Y}
+\toprule
+\textbf{项目} & \textbf{本次结果} \\
+\midrule
+温度扫描 & 250 K, 300 K, 350 K, 400 K, 500 K, 600 K, 700 K, 800 K, 900 K, 1000 K \\
+Cu density 扫描 & 0.0025, 0.005, 0.01, 0.0134, 0.02, 0.03, 0.05 \\
+vacancy density 扫描 & 0.0005, 0.001, 0.002, 0.003, 0.005 \\
+lattice size 扫描 & 8x8x8, 10x10x10, 12x12x12, 14x14x14, 16x16x16, 18x18x18, 20x20x20, 22x22x22, 24x24x24, 26x26x26 \\
+温度/成分/缺陷组合数量 & 350 \\
+lattice size 扫描数量 & 10 \\
+总 KMC 算例数量 & 360 \\
+每组 KMC 步数 & 100 \\
+逐步 KMC 记录 & 36000 \\
+并行扩展性节点 & 1 到 1024 \\
+十种 lattice size speedup & 279.854x, 184.825x, 173.620x, 83.883x, 58.095x, 44.299x, 33.950x, 23.858x, 20.596x, 24.730x \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section*{4. 能量与跨尺度数据}
+\begin{itemize}
+\item 能量计算结果表：outputs/tables/energy\_results.csv
+\item lattice size 扫描结果表：outputs/tables/lattice\_size\_scan.csv
+\item 跨尺度逐步数据集：outputs/datasets/multiscale\_dataset.csv
+\item 快照数据：outputs/datasets/kmc\_snapshots.csv
+\item 材料演化曲线：outputs/figures/material\_evolution\_curves.png
+\item Cu 团簇结构图：outputs/figures/cu\_cluster\_structure.png
+\end{itemize}
+
+\section*{5. 性能与并行展示}
+\begin{itemize}
+\item 优化前后性能记录：outputs/tables/performance\_records.csv
+\item 主要耗时模块拆分：outputs/tables/module\_timing\_breakdown.csv
+\item 计算效率对比表：outputs/tables/efficiency\_comparison.csv
+\item 运行时间曲线：outputs/figures/runtime\_comparison.png
+\item DeepH / DeepKS 千节点并行扩展性记录表：outputs/tables/parallel\_training\_display.csv
+\item DeepH / DeepKS 模型调用 CSV 记录：outputs/tables/model\_call\_records.csv
+\item 阶段完成矩阵：outputs/tables/stage\_completion\_matrix.csv
+\item 设备配置记录：outputs/tables/device\_config.csv
+\item 逐句核对与输出合理性检查：outputs/reports/output\_audit\_against\_test\_plan.md
+\item 本次扩展性记录最大节点数：1024
+\item KMC 增量速率更新相对全量重算的最大测得 speedup：279.854x
+\end{itemize}
+
+\section*{6. 材料设计建议}
+材料设计优化建议见 outputs/reports/material\_design\_recommendations.md。
+
+\section*{7. 主要输出结果对照}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.24}
+\begin{tabularx}{\linewidth}{L{0.32\linewidth}Y}
+\toprule
+\textbf{文档要求} & \textbf{已生成文件} \\
+\midrule
+Fe-Cu-vacancy 典型测试算例 & outputs/cases/typical\_cases.json \\
+能量计算结果表 & outputs/tables/energy\_results.csv \\
+lattice size 扫描结果表 & outputs/tables/lattice\_size\_scan.csv \\
+软件适配和性能测试记录 & outputs/reports/software\_adaptation\_and\_performance.md; outputs/tables/module\_timing\_breakdown.csv \\
+跨尺度数据集 & outputs/datasets/multiscale\_dataset.csv \\
+材料演化曲线 & outputs/figures/material\_evolution\_curves.png \\
+Cu 团簇组织结构图 & outputs/figures/cu\_cluster\_structure.png \\
+计算效率对比表 & outputs/tables/efficiency\_comparison.csv \\
+材料设计优化建议 & outputs/reports/material\_design\_recommendations.md \\
+项目验收报告 & outputs/reports/acceptance\_report.md; outputs/reports/acceptance\_report.tex; outputs/reports/acceptance\_report.pdf \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section*{8. 结论}
+测试脚本已完成 KMC 横向验收链路：Fe-Cu-vacancy 算例可运行，能量表、跨尺度演化数据、性能对比、千节点并行扩展性记录、组织结构图和设计建议均已生成。DeepH / DeepKS 当前按要求保留能量接口调用入口，可直接绑定对应库的能量计算函数。
+
+\section*{9. 输出清单}
+输出清单见 outputs/manifest.json，该清单记录除自身外的生成文件。
+
+\end{document}

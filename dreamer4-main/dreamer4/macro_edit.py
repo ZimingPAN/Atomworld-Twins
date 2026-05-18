@@ -38,6 +38,10 @@ def macro_duration_baseline_log_tau(global_summary: torch.Tensor, horizon_k: tor
     return torch.log(horizon) - global_summary[..., 10]
 
 
+def combine_action_endpoint_logits(source_logits: torch.Tensor, destination_logits: torch.Tensor) -> torch.Tensor:
+    return torch.maximum(source_logits, destination_logits)
+
+
 def _periodic_edge_offsets(positions: torch.Tensor, box: torch.Tensor) -> torch.Tensor:
     delta = positions.unsqueeze(-2) - positions.unsqueeze(-3)
     if box.ndim == 1:
@@ -348,6 +352,102 @@ class MacroDreamerEditModel(nn.Module):
         )
         self.change_head = nn.Linear(256, 1)
         self.type_head = nn.Linear(256, NUM_SITE_TYPES)
+        # Independent site-support proposal head. It is intentionally separate
+        # from the edit/type heads so teacher-path support positives can be
+        # learned without directly perturbing reward/tau contexts.
+        self.proposal_head = nn.Linear(256, 1)
+        # Separate action-support generator. Unlike proposal_head, this branch
+        # is intended for teacher path action/touched support rather than
+        # terminal changed-site support.
+        self.action_support_head = nn.Linear(256, 1)
+        # Direction-aware endpoint heads split teacher actions into source
+        # (old_pos) and destination (new_pos) support, addressing the v82
+        # finding that site-level touched support is not enough for planning.
+        self.action_source_head = nn.Linear(256, 1)
+        self.action_destination_head = nn.Linear(256, 1)
+        self.action_edge_pair_head = nn.Sequential(
+            nn.LayerNorm(512),
+            nn.Linear(512, 128),
+            nn.SiLU(),
+            nn.Linear(128, 1),
+        )
+        self.action_edge_pair_support_head = nn.Sequential(
+            nn.LayerNorm(512),
+            nn.Linear(512, 128),
+            nn.SiLU(),
+            nn.Linear(128, 1),
+        )
+        # v88 listwise diagnostics: keep direction-aware edge semantics
+        # separate from the scalar energy/support edge scores.
+        self.action_edge_pair_moving_type_head = nn.Sequential(
+            nn.LayerNorm(512),
+            nn.Linear(512, 128),
+            nn.SiLU(),
+            nn.Linear(128, NUM_SITE_TYPES),
+        )
+        self.action_edge_pair_order_head = nn.Sequential(
+            nn.LayerNorm(512),
+            nn.Linear(512, 128),
+            nn.SiLU(),
+            nn.Linear(128, 1),
+        )
+        # v101 terminal vacancy-displacement pair selector. This branch is
+        # intentionally separate from action_edge_pair_*: it scores long-range
+        # initial-vacancy -> final-vacancy-displaced atom pairs, not one-step
+        # teacher action edges.
+        self.vacancy_pair_head = nn.Sequential(
+            nn.LayerNorm(512),
+            nn.Linear(512, 128),
+            nn.SiLU(),
+            nn.Linear(128, 1),
+        )
+        # v114 conditional compatibility head. The previous vacancy_pair_head
+        # only sees concatenated endpoints; this branch also receives
+        # interaction features so source-conditioned destination and
+        # destination-conditioned source compatibility can be trained without
+        # perturbing the legacy pair scorer.
+        self.vacancy_pair_interaction_head = nn.Sequential(
+            nn.LayerNorm(1024),
+            nn.Linear(1024, 128),
+            nn.SiLU(),
+            nn.Linear(128, 1),
+        )
+        self.vacancy_pair_moving_type_head = nn.Sequential(
+            nn.LayerNorm(512),
+            nn.Linear(512, 128),
+            nn.SiLU(),
+            nn.Linear(128, NUM_SITE_TYPES),
+        )
+        self.vacancy_pair_order_head = nn.Sequential(
+            nn.LayerNorm(512),
+            nn.Linear(512, 128),
+            nn.SiLU(),
+            nn.Linear(128, 1),
+        )
+        # Candidate-level quality head. Unlike proposal_head, this predicts a
+        # scalar quality for the whole horizon candidate, intended for
+        # teacher-overlap-aware planner ranking.
+        self.candidate_quality_head = nn.Sequential(
+            nn.LayerNorm(512),
+            nn.Linear(512, 128),
+            nn.SiLU(),
+            nn.Linear(128, 1),
+        )
+        # v89 decoupling: terminal sparse-edit support is predicted by a
+        # dedicated site head, conditioned on an independent action-sequence
+        # support score instead of reusing the same edge-pair scalar.
+        self.terminal_edit_support_head = nn.Sequential(
+            nn.LayerNorm(257),
+            nn.Linear(257, 128),
+            nn.SiLU(),
+            nn.Linear(128, 1),
+        )
+        self.terminal_typed_diff_head = nn.Sequential(
+            nn.LayerNorm(257),
+            nn.Linear(257, 128),
+            nn.SiLU(),
+            nn.Linear(128, NUM_SITE_TYPES),
+        )
         self.type_copy_bias = 2.0
         reward_time_in = self.global_latent_dim * 2 + path_latent_dim + global_summary_dim + 32
         self.reward_head = nn.Sequential(
@@ -364,6 +464,12 @@ class MacroDreamerEditModel(nn.Module):
             nn.Linear(128, 1),
         )
         self.reward_gate_context_head = nn.Sequential(
+            nn.LayerNorm(reward_context_in),
+            nn.Linear(reward_context_in, 128),
+            nn.SiLU(),
+            nn.Linear(128, 1),
+        )
+        self.noop_risk_context_head = nn.Sequential(
             nn.LayerNorm(reward_context_in),
             nn.Linear(reward_context_in, 128),
             nn.SiLU(),
@@ -400,6 +506,14 @@ class MacroDreamerEditModel(nn.Module):
             nn.SiLU(),
             nn.Linear(128, 1),
         )
+        # Separate no-op/terminal-risk signal from reward magnitude so planner
+        # scoring can avoid zero-edit teacher basins without suppressing energy.
+        self.noop_risk_head = nn.Sequential(
+            nn.LayerNorm(reward_time_in),
+            nn.Linear(reward_time_in, 128),
+            nn.SiLU(),
+            nn.Linear(128, 1),
+        )
         with torch.no_grad():
             # The duration head predicts a residual around the physics baseline k / Gamma_tot(start).
             self.duration_head[-1].bias[0] = 0.0
@@ -411,6 +525,9 @@ class MacroDreamerEditModel(nn.Module):
             self.reward_context_head[-1].bias.zero_()
             self.reward_gate_context_head[-1].weight.zero_()
             self.reward_gate_context_head[-1].bias.zero_()
+            self.noop_risk_context_head[-1].weight.zero_()
+            self.noop_risk_context_head[-1].bias.zero_()
+            self.noop_risk_head[-1].bias.fill_(-2.0)
             self.duration_context_head[-1].weight.zero_()
             self.duration_context_head[-1].bias.zero_()
             self.realized_duration_context_head[-1].weight.zero_()
@@ -471,7 +588,7 @@ class MacroDreamerEditModel(nn.Module):
         delta = self.macro_dynamics(torch.cat([global_latent, path_latent, k_emb], dim=-1))
         return global_latent + 0.1 * delta
 
-    def decode_edit(
+    def _edit_hidden(
         self,
         *,
         site_latent: torch.Tensor,
@@ -480,7 +597,7 @@ class MacroDreamerEditModel(nn.Module):
         path_latent: torch.Tensor,
         horizon_k: torch.Tensor,
         current_types: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         k_emb = self._k_embedding(horizon_k)
         batch, sites, _ = site_latent.shape
         context = torch.cat(
@@ -493,9 +610,402 @@ class MacroDreamerEditModel(nn.Module):
             ],
             dim=-1,
         )
-        hidden = self.edit_decoder(context)
+        return self.edit_decoder(context)
+
+    def decode_edit(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        hidden = self._edit_hidden(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+        )
         raw_type_logits = self.type_head(hidden)
         return self.change_head(hidden).squeeze(-1), raw_type_logits
+
+    def decode_proposal(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+    ) -> torch.Tensor:
+        hidden = self._edit_hidden(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+        )
+        return self.proposal_head(hidden).squeeze(-1)
+
+    def decode_action_support(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+    ) -> torch.Tensor:
+        hidden = self._edit_hidden(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+        )
+        return self.action_support_head(hidden).squeeze(-1)
+
+    def decode_action_source_support(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+    ) -> torch.Tensor:
+        hidden = self._edit_hidden(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+        )
+        return self.action_source_head(hidden).squeeze(-1)
+
+    def decode_action_destination_support(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+    ) -> torch.Tensor:
+        hidden = self._edit_hidden(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+        )
+        return self.action_destination_head(hidden).squeeze(-1)
+
+    def _action_edge_pair_features(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+        edge_pair_indices: torch.Tensor,
+    ) -> torch.Tensor:
+        hidden = self._edit_hidden(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+        )
+        if edge_pair_indices.ndim != 3 or edge_pair_indices.shape[-1] != 2:
+            raise ValueError(f"expected edge_pair_indices [batch, pairs, 2], got {tuple(edge_pair_indices.shape)}")
+        pair_count = edge_pair_indices.shape[1]
+        safe_indices = edge_pair_indices.clamp(min=0, max=max(hidden.shape[1] - 1, 0)).long()
+        batch_idx = torch.arange(hidden.shape[0], device=hidden.device).view(-1, 1).expand(-1, pair_count)
+        source_hidden = hidden[batch_idx, safe_indices[..., 0]]
+        destination_hidden = hidden[batch_idx, safe_indices[..., 1]]
+        return torch.cat([source_hidden, destination_hidden], dim=-1)
+
+    def decode_action_edge_pairs(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+        edge_pair_indices: torch.Tensor,
+    ) -> torch.Tensor:
+        pair_features = self._action_edge_pair_features(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+            edge_pair_indices=edge_pair_indices,
+        )
+        return self.action_edge_pair_head(pair_features).squeeze(-1)
+
+    def decode_action_edge_pair_support(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+        edge_pair_indices: torch.Tensor,
+    ) -> torch.Tensor:
+        pair_features = self._action_edge_pair_features(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+            edge_pair_indices=edge_pair_indices,
+        )
+        return self.action_edge_pair_support_head(pair_features).squeeze(-1)
+
+    def decode_action_edge_pair_moving_type(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+        edge_pair_indices: torch.Tensor,
+    ) -> torch.Tensor:
+        pair_features = self._action_edge_pair_features(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+            edge_pair_indices=edge_pair_indices,
+        )
+        return self.action_edge_pair_moving_type_head(pair_features)
+
+    def decode_action_edge_pair_order(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+        edge_pair_indices: torch.Tensor,
+    ) -> torch.Tensor:
+        pair_features = self._action_edge_pair_features(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+            edge_pair_indices=edge_pair_indices,
+        )
+        return self.action_edge_pair_order_head(pair_features).squeeze(-1)
+
+    def decode_vacancy_pairs(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+        edge_pair_indices: torch.Tensor,
+    ) -> torch.Tensor:
+        pair_features = self._action_edge_pair_features(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+            edge_pair_indices=edge_pair_indices,
+        )
+        return self.vacancy_pair_head(pair_features).squeeze(-1)
+
+    def decode_vacancy_pair_interaction(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+        edge_pair_indices: torch.Tensor,
+    ) -> torch.Tensor:
+        pair_features = self._action_edge_pair_features(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+            edge_pair_indices=edge_pair_indices,
+        )
+        source_features, destination_features = torch.chunk(pair_features, chunks=2, dim=-1)
+        interaction_features = torch.cat(
+            [
+                pair_features,
+                source_features * destination_features,
+                torch.abs(source_features - destination_features),
+            ],
+            dim=-1,
+        )
+        return self.vacancy_pair_interaction_head(interaction_features).squeeze(-1)
+
+    def decode_vacancy_pair_moving_type(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+        edge_pair_indices: torch.Tensor,
+    ) -> torch.Tensor:
+        pair_features = self._action_edge_pair_features(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+            edge_pair_indices=edge_pair_indices,
+        )
+        return self.vacancy_pair_moving_type_head(pair_features)
+
+    def decode_vacancy_pair_order(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+        edge_pair_indices: torch.Tensor,
+    ) -> torch.Tensor:
+        pair_features = self._action_edge_pair_features(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+            edge_pair_indices=edge_pair_indices,
+        )
+        return self.vacancy_pair_order_head(pair_features).squeeze(-1)
+
+    def decode_candidate_quality(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+        candidate_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        hidden = self._edit_hidden(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+        )
+        valid = (candidate_mask > 0).unsqueeze(-1)
+        valid_f = valid.to(dtype=hidden.dtype)
+        denom = valid_f.sum(dim=1).clamp(min=1.0)
+        pooled_mean = (hidden * valid_f).sum(dim=1) / denom
+        pooled_max = hidden.masked_fill(~valid, -1e4).amax(dim=1)
+        empty = (valid_f.sum(dim=1) <= 0).expand_as(pooled_max)
+        pooled_max = torch.where(empty, torch.zeros_like(pooled_max), pooled_max)
+        quality_features = torch.cat([pooled_mean, pooled_max], dim=-1)
+        return self.candidate_quality_head(quality_features).squeeze(-1)
+
+    def decode_terminal_edit_support(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+        action_sequence_logits: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        hidden = self._edit_hidden(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+        )
+        if action_sequence_logits is None:
+            action_context = torch.zeros_like(hidden[..., :1])
+        else:
+            action_context = torch.sigmoid(action_sequence_logits).unsqueeze(-1).to(dtype=hidden.dtype)
+        terminal_features = torch.cat([hidden, action_context], dim=-1)
+        return self.terminal_edit_support_head(terminal_features).squeeze(-1)
+
+    def decode_terminal_typed_diff(
+        self,
+        *,
+        site_latent: torch.Tensor,
+        patch_latent: torch.Tensor,
+        predicted_next_global: torch.Tensor,
+        path_latent: torch.Tensor,
+        horizon_k: torch.Tensor,
+        current_types: torch.Tensor,
+        action_sequence_logits: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        hidden = self._edit_hidden(
+            site_latent=site_latent,
+            patch_latent=patch_latent,
+            predicted_next_global=predicted_next_global,
+            path_latent=path_latent,
+            horizon_k=horizon_k,
+            current_types=current_types,
+        )
+        if action_sequence_logits is None:
+            action_context = torch.zeros_like(hidden[..., :1])
+        else:
+            action_context = torch.sigmoid(action_sequence_logits).unsqueeze(-1).to(dtype=hidden.dtype)
+        terminal_features = torch.cat([hidden, action_context], dim=-1)
+        return self.terminal_typed_diff_head(terminal_features)
 
     def apply_type_copy_bias(self, raw_type_logits: torch.Tensor, current_types: torch.Tensor) -> torch.Tensor:
         copy_prior = F.one_hot(current_types, num_classes=NUM_SITE_TYPES).float() * self.type_copy_bias
@@ -555,6 +1065,7 @@ class MacroDreamerEditModel(nn.Module):
         reward_context = torch.cat([reward_patch_latent, reward_edit_features, k_emb], dim=-1)
         reward = self.reward_head(reward_hidden).squeeze(-1) + self.reward_context_head(reward_context).squeeze(-1)
         gate_logit = self.reward_gate_head(reward_hidden).squeeze(-1) + self.reward_gate_context_head(reward_context).squeeze(-1)
+        noop_risk_logit = self.noop_risk_head(reward_hidden).squeeze(-1) + self.noop_risk_context_head(reward_context).squeeze(-1)
         duration_context_delta = self.duration_context_head(reward_context)
         realized_duration_context_delta = self.realized_duration_context_head(reward_context)
 
@@ -590,6 +1101,7 @@ class MacroDreamerEditModel(nn.Module):
             "realized_tau_mu": realized_tau_mu,
             "realized_tau_log_sigma": realized_tau_log_sigma,
             "gate_logit": gate_logit,
+            "noop_risk_logit": noop_risk_logit,
         }
 
     def predict_reward_and_duration(
@@ -752,22 +1264,33 @@ def project_types_by_inventory(
         combined_scores = 0.5 * probs + 0.5 * type_change_score
         predicted_type_change_count = int((predicted_types != local_current_types).sum().item())
 
-        # Pre-compute pair candidates and distance matrices for each atom type
+        # Pre-compute pair candidates and distance matrices for each atom type.
+        # Typed logits can be one-sided early in long rollouts: the model may
+        # confidently mark atom->vacancy sites while leaving all start vacancies
+        # as copy, which would make inventory projection collapse to no-op.  Use
+        # current vacancies and current atoms as a conservative fallback support;
+        # the final pair choice is still constrained by the transport budget.
         pair_data: dict[int, tuple[list[int], list[int], torch.Tensor | None]] = {}
         available_pair_budget = 0
         box_b = box_dims[batch_idx]
         for atom_type in (0, CU_SITE_TYPE):
-            vacancy_candidates = torch.nonzero(
+            typed_vacancy_candidates = torch.nonzero(
                 (local_current_types == VACANCY_SITE_TYPE) & (predicted_types == atom_type), as_tuple=False
             ).squeeze(-1)
-            atom_candidates = torch.nonzero(
+            typed_atom_candidates = torch.nonzero(
                 (local_current_types == atom_type) & (predicted_types == VACANCY_SITE_TYPE), as_tuple=False
             ).squeeze(-1)
+            fallback_vacancy_candidates = torch.nonzero(local_current_types == VACANCY_SITE_TYPE, as_tuple=False).squeeze(-1)
+            fallback_atom_candidates = torch.nonzero(local_current_types == atom_type, as_tuple=False).squeeze(-1)
+            vacancy_candidates = torch.unique(torch.cat([typed_vacancy_candidates, fallback_vacancy_candidates])).to(dtype=torch.long)
+            atom_candidates = torch.unique(torch.cat([typed_atom_candidates, fallback_atom_candidates])).to(dtype=torch.long)
             n_vac_full = vacancy_candidates.numel()
             n_atom_full = atom_candidates.numel()
             available_pair_budget += 2 * min(n_vac_full, n_atom_full)
-            vac_sorted = sorted(vacancy_candidates.cpu().tolist(), key=lambda idx: float(combined_scores[idx].item()), reverse=True)[:16]
-            atom_sorted = sorted(atom_candidates.cpu().tolist(), key=lambda idx: float(combined_scores[idx].item()), reverse=True)[:64]
+            vac_rank_scores = combined_scores + 0.25 * local_type_probs[:, atom_type]
+            atom_rank_scores = combined_scores + 0.25 * local_type_probs[:, VACANCY_SITE_TYPE]
+            vac_sorted = sorted(vacancy_candidates.cpu().tolist(), key=lambda idx: float(vac_rank_scores[idx].item()), reverse=True)[:16]
+            atom_sorted = sorted(atom_candidates.cpu().tolist(), key=lambda idx: float(atom_rank_scores[idx].item()), reverse=True)[:64]
             # Pre-compute distance matrix (V, A) for this atom type
             if vac_sorted and atom_sorted:
                 vac_global = valid_idx[torch.tensor(vac_sorted, dtype=torch.long)]
@@ -778,8 +1301,8 @@ def project_types_by_inventory(
                     box_b,
                 )
                 # Pre-compute score matrix (V, A)
-                vac_scores = combined_scores[torch.tensor(vac_sorted)]  # (V,)
-                atom_scores_t = combined_scores[torch.tensor(atom_sorted)]  # (A,)
+                vac_scores = vac_rank_scores[torch.tensor(vac_sorted)]  # (V,)
+                atom_scores_t = atom_rank_scores[torch.tensor(atom_sorted)]  # (A,)
                 score_mat = vac_scores.unsqueeze(1) + atom_scores_t.unsqueeze(0) - 0.05 * dm.float()  # (V, A)
             else:
                 dm = None

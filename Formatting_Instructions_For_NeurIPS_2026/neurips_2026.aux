@@ -1,0 +1,180 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyperFirstAtBeginDocument{\AtBeginDocument}
+\HyperFirstAtBeginDocument{\ifx\hyper@anchor\@undefined
+\global\let\oldcontentsline\contentsline
+\gdef\contentsline#1#2#3#4{\oldcontentsline{#1}{#2}{#3}}
+\global\let\oldnewlabel\newlabel
+\gdef\newlabel#1#2{\newlabelxx{#1}#2}
+\gdef\newlabelxx#1#2#3#4#5#6{\oldnewlabel{#1}{{#2}{#3}}}
+\AtEndDocument{\ifx\hyper@anchor\@undefined
+\let\contentsline\oldcontentsline
+\let\newlabel\oldnewlabel
+\fi}
+\fi}
+\global\let\hyper@last\relax 
+\gdef\HyperFirstAtBeginDocument#1{#1}
+\providecommand*\HyPL@Entry[1]{}
+\citation{alder1959md,verlet1967fluids,bortz1975nfold,gillespie1976general,fichthorn1991dmc}
+\citation{voter2002timescale,henkelman2000neb,laio2002metadynamics,bolhuis2002tps,soisson1996cufe,soisson2007cufe}
+\citation{kingma2014vae,hafner2019planet,hafner2020dreamer,hafner2025dreamer4}
+\citation{fichthorn1991dmc,chatterjee2007kmc}
+\HyPL@Entry{0<</S/D>>}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\citation{gillespie1976general,gillespie1977exact,fichthorn1991dmc}
+\citation{verlet1967fluids,plimpton1995fast,thompson2022lammps,bortz1975nfold,gillespie1977exact}
+\citation{voter2002timescale,henkelman2000neb,laio2002metadynamics,bolhuis2002tps,soisson1996cufe,soisson2007cufe}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Random timing of key structural evolution within a fixed kinetic simulator replay budget. Each row is one kinetic simulator trajectory at a specified Cu density and random seed; ticks mark Cu-vacancy exchange events within a $1000$-micro-event budget, and the cumulative curves show how these events accumulate across the budget.}}{2}{figure.1}\protected@file@percent }
+\newlabel{fig:key-evolution-budget}{{1}{2}{Random timing of key structural evolution within a fixed kinetic simulator replay budget. Each row is one kinetic simulator trajectory at a specified Cu density and random seed; ticks mark Cu-vacancy exchange events within a $1000$-micro-event budget, and the cumulative curves show how these events accumulate across the budget}{figure.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Problem formulation}{2}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Micro-event resolution and key-state evolution}{2}{subsection.2.1}\protected@file@percent }
+\citation{sutton1988td,sutton1990dyna,sutton1999options}
+\citation{bortz1975nfold,gillespie1976general,fichthorn1991dmc}
+\citation{chatterjee2007kmc}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Time-aware macro-step objective}{3}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}KMC-provided AtomWorld as a continuous-time teacher}{3}{subsection.2.3}\protected@file@percent }
+\citation{fichthorn1991dmc,chatterjee2007kmc}
+\citation{soisson1996cufe,soisson2007cufe}
+\citation{gillespie1976general,gillespie1977exact,fichthorn1991dmc}
+\citation{hafner2019planet,hafner2020dreamer,hafner2021dreamerv2,hafner2025dreamer4}
+\citation{deisenroth2011pilco,nagabandi2018neuralmb,chua2018pets,janner2019mbpo,kaiser2020atari}
+\citation{kingma2014vae,battaglia2016interaction,sanchez2018physics,kipf2018nri,sanchez2020learning,pfaff2021meshgraphnets,gilmer2017mpnn,kipf2017gcn,velickovic2018gat,xu2019gin,gasteiger2020dimenet,satorras2021egnn,fuchs2020se3}
+\@writefile{toc}{\contentsline {section}{\numberline {3}AtomWorld-Mirror}{4}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Teacher supervision}{4}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Student latent world model}{4}{subsection.3.2}\protected@file@percent }
+\citation{chatterjee2007kmc,henkelman2001akmc,zamora2016spectad}
+\citation{henkelman2000neb,liu2023trps}
+\citation{soisson1996cufe,soisson2007cufe}
+\citation{gillespie1976general,gillespie1977exact,fichthorn1991dmc,lin2019partialscaling}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Reachability-constrained sparse edits}{5}{subsection.3.3}\protected@file@percent }
+\citation{daw1984eam,finnis1984nbody}
+\citation{soisson1996cufe,soisson2007cufe,messina2017annkmc,castin2017nnp}
+\citation{jain2013materialsproject,curtarolo2012aflow,ong2013pymatgen,ward2018matminer,choudhary2020jarvis}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Continuous-time duration modeling and loss}{6}{subsection.3.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}Experimental design}{6}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Event-driven instantiation}{6}{subsection.4.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Controlled macro-step validation against the teacher simulator. The panels compare structural edit quality, projected validity, and expected-duration alignment under the same teacher-supervised segment protocol.}}{7}{figure.2}\protected@file@percent }
+\newlabel{fig:main-results}{{2}{7}{Controlled macro-step validation against the teacher simulator. The panels compare structural edit quality, projected validity, and expected-duration alignment under the same teacher-supervised segment protocol}{figure.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Closed-loop autonomous rollout, baselines, and ablations}{7}{subsection.4.2}\protected@file@percent }
+\citation{plimpton1995fast,thompson2022lammps,li2019openkmc,zhang2018deeppotential,wang2018deepmdkit,batzner2022nequip,musaelian2023allegro}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Cu-density and temperature ablation matrices for Multi-K teacher-probe rollout. Darker cells indicate larger failure.}}{8}{figure.3}\protected@file@percent }
+\newlabel{fig:closed-loop-results}{{3}{8}{Cu-density and temperature ablation matrices for Multi-K teacher-probe rollout. Darker cells indicate larger failure}{figure.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Long-horizon diagnostics and efficiency}{8}{subsection.4.3}\protected@file@percent }
+\newlabel{eq:teacher-forced-time-ratio}{{24}{8}{Long-horizon diagnostics and efficiency}{equation.4.24}{}}
+\citation{marrink2007martini,noid2008mscg,garnier2013cgkmc,chodera2014msm}
+\citation{behler2007nn,schutt2017schnet,batatia2022mace,zhang2018deeppotential,raissi2019pinn,pfaff2021meshgraphnets,bortz1975nfold,gillespie1977exact,li2019openkmc,voter1997hyperdynamics,schulman2017ppo,tang2024tks}
+\citation{jain2013materialsproject,merchant2023gnome,karniadakis2021piml}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces End-to-end timing diagnostic across lattice sizes and temperatures.}}{9}{figure.4}\protected@file@percent }
+\newlabel{fig:speedup-benchmark}{{4}{9}{End-to-end timing diagnostic across lattice sizes and temperatures}{figure.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Related work}{9}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{9}{section.6}\protected@file@percent }
+\bibstyle{unsrtnat}
+\bibdata{references}
+\bibcite{alder1959md}{{1}{1959}{{Alder and Wainwright}}{{}}}
+\bibcite{verlet1967fluids}{{2}{1967}{{Verlet}}{{}}}
+\bibcite{bortz1975nfold}{{3}{1975}{{Bortz et~al.}}{{Bortz, Kalos, and Lebowitz}}}
+\bibcite{gillespie1976general}{{4}{1976}{{Gillespie}}{{}}}
+\bibcite{fichthorn1991dmc}{{5}{1991}{{Fichthorn and Weinberg}}{{}}}
+\bibcite{voter2002timescale}{{6}{2002}{{Voter et~al.}}{{Voter, Montalenti, and Germann}}}
+\bibcite{henkelman2000neb}{{7}{2000}{{Henkelman et~al.}}{{Henkelman, Uberuaga, and J{\'o}nsson}}}
+\bibcite{laio2002metadynamics}{{8}{2002}{{Laio and Parrinello}}{{}}}
+\bibcite{bolhuis2002tps}{{9}{2002}{{Bolhuis et~al.}}{{Bolhuis, Chandler, Dellago, and Geissler}}}
+\bibcite{soisson1996cufe}{{10}{1996}{{Soisson et~al.}}{{Soisson, Barbu, and Martin}}}
+\bibcite{soisson2007cufe}{{11}{2007}{{Soisson and Fu}}{{}}}
+\bibcite{kingma2014vae}{{12}{2014}{{Kingma and Welling}}{{}}}
+\bibcite{hafner2019planet}{{13}{2019}{{Hafner et~al.}}{{Hafner, Lillicrap, Fischer, Villegas, Ha, Lee, and Davidson}}}
+\bibcite{hafner2020dreamer}{{14}{2020}{{Hafner et~al.}}{{Hafner, Lillicrap, Ba, and Norouzi}}}
+\bibcite{hafner2025dreamer4}{{15}{2025}{{Hafner et~al.}}{{Hafner, Yan, and Lillicrap}}}
+\bibcite{chatterjee2007kmc}{{16}{2007}{{Chatterjee and Vlachos}}{{}}}
+\bibcite{gillespie1977exact}{{17}{1977}{{Gillespie}}{{}}}
+\bibcite{plimpton1995fast}{{18}{1995}{{Plimpton}}{{}}}
+\bibcite{thompson2022lammps}{{19}{2022}{{Thompson et~al.}}{{Thompson, Aktulga, Berger, Bolintineanu, Brown, Crozier, in~'t Veld, Kohlmeyer, Moore, Nguyen, et~al.}}}
+\bibcite{sutton1988td}{{20}{1988}{{Sutton}}{{}}}
+\bibcite{sutton1990dyna}{{21}{1991}{{Sutton}}{{}}}
+\bibcite{sutton1999options}{{22}{1999}{{Sutton et~al.}}{{Sutton, Precup, and Singh}}}
+\bibcite{hafner2021dreamerv2}{{23}{2021}{{Hafner et~al.}}{{Hafner, Lillicrap, Norouzi, and Ba}}}
+\bibcite{deisenroth2011pilco}{{24}{2011}{{Deisenroth and Rasmussen}}{{}}}
+\bibcite{nagabandi2018neuralmb}{{25}{2018}{{Nagabandi et~al.}}{{Nagabandi, Kahn, Fearing, and Levine}}}
+\bibcite{chua2018pets}{{26}{2018}{{Chua et~al.}}{{Chua, Calandra, McAllister, and Levine}}}
+\bibcite{janner2019mbpo}{{27}{2019}{{Janner et~al.}}{{Janner, Fu, Zhang, and Levine}}}
+\bibcite{kaiser2020atari}{{28}{2020}{{Kaiser et~al.}}{{Kaiser, Babaeizadeh, Milos, Osinski, Campbell, Czechowski, Erhan, Finn, Kozakowski, Levine, Mohiuddin, Sepassi, Tucker, and Michalewski}}}
+\bibcite{battaglia2016interaction}{{29}{2016}{{Battaglia et~al.}}{{Battaglia, Pascanu, Lai, Rezende, and Kavukcuoglu}}}
+\bibcite{sanchez2018physics}{{30}{2018}{{Sanchez-Gonzalez et~al.}}{{Sanchez-Gonzalez, Heess, Springenberg, Merel, Riedmiller, Hadsell, and Battaglia}}}
+\bibcite{kipf2018nri}{{31}{2018}{{Kipf et~al.}}{{Kipf, Fetaya, Wang, Welling, and Zemel}}}
+\bibcite{sanchez2020learning}{{32}{2020}{{Sanchez-Gonzalez et~al.}}{{Sanchez-Gonzalez, Godwin, Pfaff, Ying, Leskovec, and Battaglia}}}
+\bibcite{pfaff2021meshgraphnets}{{33}{2021}{{Pfaff et~al.}}{{Pfaff, Fortunato, Sanchez-Gonzalez, and Battaglia}}}
+\bibcite{gilmer2017mpnn}{{34}{2017}{{Gilmer et~al.}}{{Gilmer, Schoenholz, Riley, Vinyals, and Dahl}}}
+\bibcite{kipf2017gcn}{{35}{2017}{{Kipf and Welling}}{{}}}
+\bibcite{velickovic2018gat}{{36}{2018}{{Veli{\v {c}}kovi{\'c} et~al.}}{{Veli{\v {c}}kovi{\'c}, Cucurull, Casanova, Romero, Li{\`o}, and Bengio}}}
+\bibcite{xu2019gin}{{37}{2019}{{Xu et~al.}}{{Xu, Hu, Leskovec, and Jegelka}}}
+\bibcite{gasteiger2020dimenet}{{38}{2020}{{Gasteiger et~al.}}{{Gasteiger, Gro{\ss }, and G{\"u}nnemann}}}
+\bibcite{satorras2021egnn}{{39}{2021}{{Satorras et~al.}}{{Satorras, Hoogeboom, and Welling}}}
+\bibcite{fuchs2020se3}{{40}{2020}{{Fuchs et~al.}}{{Fuchs, Worrall, Fischer, and Welling}}}
+\bibcite{henkelman2001akmc}{{41}{2001}{{Henkelman and J{\'o}nsson}}{{}}}
+\bibcite{zamora2016spectad}{{42}{2016}{{Zamora et~al.}}{{Zamora, Voter, Perez, Santhi, Mniszewski, Thulasidasan, and Eidenbenz}}}
+\bibcite{liu2023trps}{{43}{2023}{{Liu}}{{}}}
+\bibcite{lin2019partialscaling}{{44}{2019}{{Lin et~al.}}{{Lin, Feng, and Hlavacek}}}
+\bibcite{daw1984eam}{{45}{1984}{{Daw and Baskes}}{{}}}
+\bibcite{finnis1984nbody}{{46}{1984}{{Finnis and Sinclair}}{{}}}
+\bibcite{messina2017annkmc}{{47}{2017}{{Messina et~al.}}{{Messina, Castin, Domain, and Olsson}}}
+\bibcite{castin2017nnp}{{48}{2017}{{Castin et~al.}}{{Castin, Messina, Domain, Pasianot, and Olsson}}}
+\bibcite{jain2013materialsproject}{{49}{2013}{{Jain et~al.}}{{Jain, Ong, Hautier, Chen, Richards, Dacek, Cholia, Gunter, Skinner, Ceder, et~al.}}}
+\bibcite{curtarolo2012aflow}{{50}{2012}{{Curtarolo et~al.}}{{Curtarolo, Setyawan, Hart, Jahnatek, Chepulskii, Taylor, Wang, Xue, Yang, Levy, et~al.}}}
+\bibcite{ong2013pymatgen}{{51}{2013}{{Ong et~al.}}{{Ong, Richards, Jain, Hautier, Kocher, Cholia, Gunter, Chevrier, Persson, and Ceder}}}
+\bibcite{ward2018matminer}{{52}{2018}{{Ward et~al.}}{{Ward, Dunn, Faghaninia, Zimmermann, Bajaj, Wang, Montoya, Chen, Bystrom, Dylla, et~al.}}}
+\bibcite{choudhary2020jarvis}{{53}{2020}{{Choudhary et~al.}}{{Choudhary, Garrity, Reid, DeCost, Biacchi, Hight~Walker, Trautt, Hattrick-Simpers, Kusne, Centrone, et~al.}}}
+\bibcite{li2019openkmc}{{54}{2019}{{Li et~al.}}{{Li, Shang, Zhang, Li, Wu, Wang, Zhang, Li, Chen, and Wei}}}
+\bibcite{zhang2018deeppotential}{{55}{2018}{{Zhang et~al.}}{{Zhang, Han, Wang, Car, and E}}}
+\bibcite{wang2018deepmdkit}{{56}{2018}{{Wang et~al.}}{{Wang, Zhang, Han, and E}}}
+\bibcite{batzner2022nequip}{{57}{2022}{{Batzner et~al.}}{{Batzner, Musaelian, Sun, Geiger, Mailoa, Kornbluth, Molinari, Smidt, and Kozinsky}}}
+\bibcite{musaelian2023allegro}{{58}{2023}{{Musaelian et~al.}}{{Musaelian, Batzner, Johansson, Sun, Owen, Kornbluth, and Kozinsky}}}
+\bibcite{marrink2007martini}{{59}{2007}{{Marrink et~al.}}{{Marrink, Risselada, Yefimov, Tieleman, and de~Vries}}}
+\bibcite{noid2008mscg}{{60}{2008}{{Noid et~al.}}{{Noid, Chu, Ayton, Krishna, Izvekov, Voth, Das, and Andersen}}}
+\bibcite{garnier2013cgkmc}{{61}{2013}{{Garnier and Nastar}}{{}}}
+\bibcite{chodera2014msm}{{62}{2014}{{Chodera and No{\'e}}}{{}}}
+\bibcite{behler2007nn}{{63}{2007}{{Behler and Parrinello}}{{}}}
+\bibcite{schutt2017schnet}{{64}{2017}{{Sch{\"u}tt et~al.}}{{Sch{\"u}tt, Kindermans, Felix, Chmiela, Tkatchenko, and M{\"u}ller}}}
+\bibcite{batatia2022mace}{{65}{2022}{{Batatia et~al.}}{{Batatia, Kov{\'a}cs, Simm, Ortner, and Cs{\'a}nyi}}}
+\bibcite{raissi2019pinn}{{66}{2019}{{Raissi et~al.}}{{Raissi, Perdikaris, and Karniadakis}}}
+\bibcite{voter1997hyperdynamics}{{67}{1997}{{Voter}}{{}}}
+\bibcite{schulman2017ppo}{{68}{2017}{{Schulman et~al.}}{{Schulman, Wolski, Dhariwal, Radford, and Klimov}}}
+\bibcite{tang2024tks}{{69}{2024}{{Tang et~al.}}{{Tang, Li, Song, Liu, Xu, Wang, Chung, and Li}}}
+\bibcite{merchant2023gnome}{{70}{2023}{{Merchant et~al.}}{{Merchant, Batzner, Schoenholz, Aykol, Cheon, and Cubuk}}}
+\bibcite{karniadakis2021piml}{{71}{2021}{{Karniadakis et~al.}}{{Karniadakis, Kevrekidis, Lu, Perdikaris, Wang, and Yang}}}
+\bibcite{yeh2004hea}{{72}{2004}{{Yeh et~al.}}{{Yeh, Chen, Lin, Gan, Chin, Shun, Tsau, and Chang}}}
+\bibcite{cantor2004hea}{{73}{2004}{{Cantor et~al.}}{{Cantor, Chang, Knight, and Vincent}}}
+\bibcite{miracle2017hea}{{74}{2017}{{Miracle and Senkov}}{{}}}
+\bibcite{rahman1964argon}{{75}{1964}{{Rahman}}{{}}}
+\bibcite{bartok2010gap}{{76}{2010}{{Bart{\'o}k et~al.}}{{Bart{\'o}k, Payne, Kondor, and Cs{\'a}nyi}}}
+\bibcite{xie2018cgcnn}{{77}{2018}{{Xie and Grossman}}{{}}}
+\bibcite{voter1998parallelreplica}{{78}{1998}{{Voter}}{{}}}
+\bibcite{sorensen2000tad}{{79}{2000}{{S{\o }rensen and Voter}}{{}}}
+\bibcite{bojesen2018pgmc}{{80}{2018}{{Bojesen}}{{}}}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Training details and parameters}{15}{appendix.A}\protected@file@percent }
+\newlabel{app:training-details}{{A}{15}{Training details and parameters}{appendix.A}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Training and evaluation configuration.}}{15}{table.1}\protected@file@percent }
+\newlabel{tab:training-config}{{1}{15}{Training and evaluation configuration}{table.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {B}Cu--Fe alloy aging visualization}{15}{appendix.B}\protected@file@percent }
+\newlabel{app:cu-cluster-evolution}{{B}{15}{Cu--Fe alloy aging visualization}{appendix.B}{}}
+\citation{soisson1996cufe,soisson2007cufe}
+\citation{yeh2004hea,cantor2004hea,miracle2017hea}
+\citation{alder1959md,rahman1964argon,verlet1967fluids,plimpton1995fast,thompson2022lammps}
+\citation{thompson2022lammps}
+\citation{jain2013materialsproject,curtarolo2012aflow,ong2013pymatgen,ward2018matminer,choudhary2020jarvis}
+\citation{marrink2007martini,noid2008mscg}
+\citation{garnier2013cgkmc}
+\citation{chodera2014msm}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Cu-cluster visual evolution from initial to final states in a Cu--Fe alloy aging simulation experiment. Each point denotes a Cu atom in the teacher-simulated lattice. Colors use a shared red--pink-purple--blue scale for the actual 1NN/2NN-connected Cu cluster size $C_i$, with red denoting single-Cu clusters and blue denoting the maximum cluster size in this trajectory.}}{16}{figure.5}\protected@file@percent }
+\newlabel{fig:cu-cluster-evolution}{{5}{16}{Cu-cluster visual evolution from initial to final states in a Cu--Fe alloy aging simulation experiment. Each point denotes a Cu atom in the teacher-simulated lattice. Colors use a shared red--pink-purple--blue scale for the actual 1NN/2NN-connected Cu cluster size $C_i$, with red denoting single-Cu clusters and blue denoting the maximum cluster size in this trajectory}{figure.5}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {C}Limitations and future work}{16}{appendix.C}\protected@file@percent }
+\newlabel{app:limitations}{{C}{16}{Limitations and future work}{appendix.C}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {D}Expanded related-work discussion}{16}{appendix.D}\protected@file@percent }
+\newlabel{app:expanded-related-work}{{D}{16}{Expanded related-work discussion}{appendix.D}{}}
+\citation{behler2007nn,bartok2010gap,schutt2017schnet,xie2018cgcnn,batatia2022mace,gilmer2017mpnn,gasteiger2020dimenet,batzner2022nequip,musaelian2023allegro}
+\citation{zhang2018deeppotential,wang2018deepmdkit}
+\citation{raissi2019pinn,karniadakis2021piml,battaglia2016interaction,kipf2018nri,pfaff2021meshgraphnets}
+\citation{bortz1975nfold,gillespie1977exact,fichthorn1991dmc,chatterjee2007kmc}
+\citation{li2019openkmc}
+\citation{voter1997hyperdynamics,voter1998parallelreplica,sorensen2000tad,henkelman2000neb,henkelman2001akmc,laio2002metadynamics,bolhuis2002tps,zamora2016spectad,liu2023trps,lin2019partialscaling}
+\citation{schulman2017ppo,tang2024tks,bojesen2018pgmc}
+\gdef \@abspage@last{24}

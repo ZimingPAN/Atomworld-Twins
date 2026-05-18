@@ -10,18 +10,35 @@
 - 主执行脚本：`run_kmc_acceptance.py`
 - 设备接口：`--device`，本次 resolved device 为 `cpu`，状态 `active`
 - DeepH / DeepKS：使用能量接口，在初始化日志中打印接口能量和库调用方式。
-- Fe-Cu-vacancy 主算例数量：350
-- 跨尺度扫描网格：T=250,300,350,400,500,600,700,800,900,1000 K; Cu=0.0025,0.005,0.01,0.0134,0.02,0.03,0.05; V=0.0005,0.001,0.002,0.003,0.005
+- Fe-Cu-vacancy 主算例数量：360（温度/成分/缺陷组合 350；lattice size 扫描 10）
+- 跨尺度扫描网格：T=250,300,350,400,500,600,700,800,900,1000 K; Cu=0.0025,0.005,0.01,0.0134,0.02,0.03,0.05; V=0.0005,0.001,0.002,0.003,0.005; lattice_size=8x8x8,10x10x10,12x12x12,14x14x14,16x16x16,18x18x18,20x20x20,22x22x22,24x24x24,26x26x26
 
-## 3. 能量与跨尺度数据
+## 3. 测试规模总览
+
+| 项目 | 本次结果 |
+| --- | --- |
+| 温度扫描 | 250 K,300 K,350 K,400 K,500 K,600 K,700 K,800 K,900 K,1000 K |
+| Cu density 扫描 | 0.0025,0.005,0.01,0.0134,0.02,0.03,0.05 |
+| vacancy density 扫描 | 0.0005,0.001,0.002,0.003,0.005 |
+| lattice size 扫描 | 8x8x8, 10x10x10, 12x12x12, 14x14x14, 16x16x16, 18x18x18, 20x20x20, 22x22x22, 24x24x24, 26x26x26 |
+| 温度/成分/缺陷组合数量 | 350 |
+| lattice size 扫描数量 | 10 |
+| 总 KMC 算例数量 | 360 |
+| 每组 KMC 步数 | 100 |
+| 逐步 KMC 记录 | 36000 |
+| 并行扩展性节点 | 1 到 1024 |
+| 十种 lattice size speedup | 279.854x, 184.825x, 173.620x, 83.883x, 58.095x, 44.299x, 33.950x, 23.858x, 20.596x, 24.730x |
+
+## 4. 能量与跨尺度数据
 
 - 能量计算结果表：`outputs/tables/energy_results.csv`
+- lattice size 扫描结果表：`outputs/tables/lattice_size_scan.csv`
 - 跨尺度逐步数据集：`outputs/datasets/multiscale_dataset.csv`
 - 快照数据：`outputs/datasets/kmc_snapshots.csv`
 - 材料演化曲线：`outputs/figures/material_evolution_curves.png`
 - Cu 团簇结构图：`outputs/figures/cu_cluster_structure.png`
 
-## 4. 性能与并行展示
+## 5. 性能与并行展示
 
 - 优化前后性能记录：`outputs/tables/performance_records.csv`
 - 主要耗时模块拆分：`outputs/tables/module_timing_breakdown.csv`
@@ -33,13 +50,13 @@
 - 设备配置记录：`outputs/tables/device_config.csv`
 - 逐句核对与输出合理性检查：`outputs/reports/output_audit_against_test_plan.md`
 - 本次扩展性记录最大节点数：1024
-- KMC 增量速率更新相对全量重算的最大测得 speedup：11.857x
+- KMC 增量速率更新相对全量重算的最大测得 speedup：279.854x
 
-## 5. 材料设计建议
+## 6. 材料设计建议
 
 材料设计优化建议见 `outputs/reports/material_design_recommendations.md`。
 
-## 6. 主要输出结果对照
+## 7. 主要输出结果对照
 
 | 文档要求 | 已生成文件 |
 | --- | --- |
@@ -51,12 +68,12 @@
 | Cu 团簇组织结构图 | `outputs/figures/cu_cluster_structure.png` |
 | 计算效率对比表 | `outputs/tables/efficiency_comparison.csv` |
 | 材料设计优化建议 | `outputs/reports/material_design_recommendations.md` |
-| 项目验收报告 | `outputs/reports/acceptance_report.md`; `outputs/reports/acceptance_report.docx` |
+| 项目验收报告 | `outputs/reports/acceptance_report.md`; `outputs/reports/acceptance_report.tex`; `outputs/reports/acceptance_report.pdf` |
 
-## 7. 结论
+## 8. 结论
 
 测试脚本已完成 KMC 横向验收链路：Fe-Cu-vacancy 算例可运行，能量表、跨尺度演化数据、性能对比、千节点并行扩展性记录、组织结构图和设计建议均已生成。DeepH / DeepKS 当前按要求保留能量接口调用入口，可直接绑定对应库的能量计算函数。
 
-## 8. 输出清单
+## 9. 输出清单
 
 输出清单见 `outputs/manifest.json`，该清单记录除自身外的生成文件。

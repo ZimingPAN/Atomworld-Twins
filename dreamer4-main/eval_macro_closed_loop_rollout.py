@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover - optional dependency fallback
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Closed-loop autonomous AtomWorld-Twins macro rollout evaluation"
+        description="Closed-loop autonomous AtomWorld-Mirror macro rollout evaluation"
     )
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--duration_checkpoint", type=str, default=None)
@@ -34,6 +34,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--rollout_segments", type=int, default=200)
     parser.add_argument("--max_episode_steps_override", type=int, default=None)
+    parser.add_argument("--temperature_override", type=float, default=None)
+    parser.add_argument("--cu_density_override", type=float, default=None)
     parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--print_segments", type=int, default=5)
     parser.add_argument("--progress_every", type=int, default=25)
@@ -89,12 +91,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--planner_tau_residual_penalty", type=float, default=0.0)
     parser.add_argument("--planner_k_penalty_power", type=float, default=0.0)
     parser.add_argument("--raw_changed_budget_multiplier", type=float, default=2.0)
+    parser.add_argument(
+        "--inventory_stress_mode",
+        type=str,
+        default="none",
+        choices=["none", "vacancy_bias"],
+        help=(
+            "Extra no-inventory stress mode for ablation diagnostics. vacancy_bias keeps the reachable "
+            "candidate support but forces selected non-vacancy sites to vacancy before applying the raw edit."
+        ),
+    )
     parser.add_argument("--global_candidate_seed_vacancies", type=int, default=8)
     parser.add_argument("--global_candidate_cu_fraction", type=float, default=0.5)
     parser.add_argument("--allow_teacher_noop_segments", action="store_true")
     parser.add_argument("--save_snapshots", action="store_true")
     parser.add_argument("--snapshot_every", type=int, default=25)
     parser.add_argument("--snapshot_max_cu", type=int, default=1200)
+    parser.add_argument("--save_edit_trace", action="store_true")
     return parser.parse_args()
 
 
@@ -342,6 +355,42 @@ def _apply_candidate_to_env(env: mod.MacroKMCEnv, candidate: dict[str, Any], *, 
     }
 
 
+def _candidate_edit_trace_row(
+    *,
+    segment_idx: int,
+    candidate: dict[str, Any],
+    applied: dict[str, float],
+) -> dict[str, Any]:
+    if "candidate_positions" not in candidate:
+        return {
+            "index": int(segment_idx),
+            "segment_k": int(candidate.get("segment_k", 0)),
+            "applied_changed_count": float(applied.get("applied_changed_count", 0.0)),
+            "positions": [],
+            "current_types": [],
+            "selected_types": [],
+        }
+    positions = np.asarray(candidate["candidate_positions"], dtype=np.int64).reshape(-1, 3)
+    current_types = np.asarray(candidate["current_types"], dtype=np.int64).reshape(-1)
+    selected_types = np.asarray(candidate["selected_types"], dtype=np.int64).reshape(-1)
+    mask = np.asarray(candidate["candidate_mask"], dtype=np.float32).reshape(-1) > 0
+    changed = mask & (current_types != selected_types)
+    changed_positions = positions[changed]
+    changed_current = current_types[changed]
+    changed_selected = selected_types[changed]
+    return {
+        "index": int(segment_idx),
+        "segment_k": int(candidate["segment_k"]),
+        "candidate_mode": str(candidate.get("candidate_mode", "")),
+        "edit_mode": str(candidate.get("edit_mode", "")),
+        "predicted_expected_tau": float(candidate.get("predicted_expected_tau", 0.0)),
+        "applied_changed_count": float(applied.get("applied_changed_count", 0.0)),
+        "positions": changed_positions.astype(int).tolist(),
+        "current_types": changed_current.astype(int).tolist(),
+        "selected_types": changed_selected.astype(int).tolist(),
+    }
+
+
 def _sample_global_candidate_positions(
     *,
     env: mod.MacroKMCEnv,
@@ -452,12 +501,25 @@ def _raw_selected_types(
     candidate_mask: torch.Tensor,
     horizon_k: torch.Tensor,
     raw_changed_budget_multiplier: float,
+    inventory_stress_mode: str = "none",
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    raw_types = torch.argmax(type_logits, dim=-1)
     valid = candidate_mask > 0
+    budget = int(max(1, round(float(raw_changed_budget_multiplier) * int(horizon_k.item()))))
+    if inventory_stress_mode == "vacancy_bias":
+        atom_valid = valid & (current_types != mod.V_TYPE)
+        score = torch.sigmoid(change_logits).masked_fill(~atom_valid, -1.0)
+        selected = torch.zeros_like(valid, dtype=torch.bool)
+        topk = min(budget, int(torch.sum(atom_valid).item()))
+        if topk > 0:
+            idx = torch.topk(score[0], k=topk).indices
+            selected[0, idx] = True
+        selected_types = current_types.clone()
+        selected_types[selected] = int(mod.V_TYPE)
+        return selected_types, selected
+
+    raw_types = torch.argmax(type_logits, dim=-1)
     would_change = (raw_types != current_types) & valid
     score = torch.sigmoid(change_logits).masked_fill(~would_change, -1.0)
-    budget = int(max(1, round(float(raw_changed_budget_multiplier) * int(horizon_k.item()))))
     selected = torch.zeros_like(valid, dtype=torch.bool)
     valid_scores = score[0]
     topk = min(budget, int(torch.sum(would_change).item()))
@@ -488,6 +550,7 @@ def _predict_closed_loop_candidate(
     planner_tau_residual_penalty: float,
     planner_k_penalty_power: float,
     raw_changed_budget_multiplier: float,
+    inventory_stress_mode: str,
     rng: np.random.Generator,
     global_candidate_cu_fraction: float,
     reward_prediction_source: str,
@@ -548,6 +611,7 @@ def _predict_closed_loop_candidate(
             candidate_mask=tensors["candidate_mask"],
             horizon_k=tensors["horizon_k"],
             raw_changed_budget_multiplier=raw_changed_budget_multiplier,
+            inventory_stress_mode=inventory_stress_mode,
         )
         changed_valid = selected_changed_mask & (tensors["candidate_mask"] > 0)
         if int(changed_valid.sum().item()) > 0:
@@ -814,6 +878,10 @@ def main() -> None:
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
     env_cfg = long_eval._build_env_cfg(ckpt_args, max_episode_steps_override=args.max_episode_steps_override)
+    if args.temperature_override is not None:
+        env_cfg["temperature"] = float(args.temperature_override)
+    if args.cu_density_override is not None:
+        env_cfg["cu_density"] = float(args.cu_density_override)
     teacher_env = mod.MacroKMCEnv(env_cfg)
     teacher_env.reset()
     model_env = copy.deepcopy(teacher_env)
@@ -824,6 +892,7 @@ def main() -> None:
 
     segments: list[dict[str, Any]] = []
     snapshots: list[dict[str, Any]] = []
+    edit_trace: list[dict[str, Any]] = []
     pred_tau_exp: list[float] = []
     true_tau_exp: list[float] = []
     pred_reward_sum: list[float] = []
@@ -878,6 +947,7 @@ def main() -> None:
                             planner_tau_residual_penalty=args.planner_tau_residual_penalty,
                             planner_k_penalty_power=args.planner_k_penalty_power,
                             raw_changed_budget_multiplier=args.raw_changed_budget_multiplier,
+                            inventory_stress_mode=args.inventory_stress_mode,
                             rng=rng,
                             global_candidate_cu_fraction=args.global_candidate_cu_fraction,
                             reward_prediction_source=reward_prediction_source,
@@ -886,7 +956,7 @@ def main() -> None:
                     )
                     if item is not None
                 ]
-            effective_min = int(args.min_projected_changed_sites) if planner_enabled else 0
+            effective_min = 0 if args.constraint_mode == "no_change" else int(args.min_projected_changed_sites)
             selected = _choose_closed_loop_candidate(candidates, min_projected_changed_sites=effective_min)
             prediction_wall_times.append(float(time.perf_counter() - predict_t0))
             if selected is None:
@@ -934,6 +1004,14 @@ def main() -> None:
                     predicted_tau=float(selected["predicted_expected_tau"]),
                 )
             apply_wall_times.append(float(time.perf_counter() - apply_t0))
+            if args.save_edit_trace:
+                edit_trace.append(
+                    _candidate_edit_trace_row(
+                        segment_idx=segment_idx,
+                        candidate=selected,
+                        applied=applied,
+                    )
+                )
 
             if args.reference_mode == "independent_teacher":
                 last_reference_env = reference_env
@@ -1057,6 +1135,8 @@ def main() -> None:
         "duration_source": effective_duration_source,
         "checkpoint": str(checkpoint_path),
         "duration_checkpoint": str(Path(args.duration_checkpoint)) if args.duration_checkpoint else None,
+        "temperature": float(env_cfg["temperature"]),
+        "cu_density": float(env_cfg["cu_density"]),
         "seed": int(args.seed),
         "segment_ks": horizon_choices,
         "planner_enabled": planner_enabled,
@@ -1123,14 +1203,19 @@ def main() -> None:
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     summary["snapshot_path"] = None
+    summary["edit_trace_path"] = None
     if args.save_snapshots:
         snapshot_path = output_path.with_suffix(".snapshots.json")
         snapshot_path.write_text(json.dumps({"snapshots": snapshots}, ensure_ascii=False, indent=2), encoding="utf-8")
         summary["snapshot_path"] = str(snapshot_path)
+    if args.save_edit_trace:
+        edit_trace_path = output_path.with_suffix(".edit_trace.json")
+        edit_trace_path.write_text(json.dumps({"edit_trace": edit_trace}, ensure_ascii=False, indent=2), encoding="utf-8")
+        summary["edit_trace_path"] = str(edit_trace_path)
     output_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print("=" * 72)
-    print("AtomWorld-Twins Closed-loop Autonomous Rollout")
+    print("AtomWorld-Mirror Closed-loop Autonomous Rollout")
     print(
         f"completed={completed}/{args.rollout_segments}, stop_reason={stop_reason}, "
         f"constraint_mode={args.constraint_mode}, segment_ks={horizon_choices}"

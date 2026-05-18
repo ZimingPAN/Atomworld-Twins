@@ -1,6 +1,7 @@
 [启动] KMC 横向测试开始。
 [KMC] Fe-Cu-vacancy 算例初始化与演化测试。
 [设备] requested=cpu resolved=cpu status=active
+[规模] 温度/成分/缺陷组合=350, lattice size 扫描=10, 总算例=360。
 [KMC] 开始算例 ms_000: T=250 K, Cu=0.0025, V=0.0005, size=(12, 12, 12), steps=100
 [DeepH 初始化] case=ms_000 pair_energy=-14802.636888 eV, DeepH接口能量=-14802.647688 eV
 [DeepH 调用说明] from deeph.inference import DeepHCalculator; calc = DeepHCalculator(model_dir='models/deeph_fecu_vacancy'); hamiltonian = calc.predict_hamiltonian(structure); energy = calc.total_energy(hamiltonian, structure)
@@ -355,9 +356,26 @@
 [KMC] 开始算例 ms_347: T=1000 K, Cu=0.05, V=0.002, size=(12, 12, 12), steps=100
 [KMC] 开始算例 ms_348: T=1000 K, Cu=0.05, V=0.003, size=(12, 12, 12), steps=100
 [KMC] 开始算例 ms_349: T=1000 K, Cu=0.05, V=0.005, size=(12, 12, 12), steps=100
+[KMC] 开始算例 ls_00_8: T=600 K, Cu=0.0134, V=0.001, size=(8, 8, 8), steps=100
+[KMC] 开始算例 ls_01_10: T=600 K, Cu=0.0134, V=0.001, size=(10, 10, 10), steps=100
+[KMC] 开始算例 ls_02_12: T=600 K, Cu=0.0134, V=0.001, size=(12, 12, 12), steps=100
+[KMC] 开始算例 ls_03_14: T=600 K, Cu=0.0134, V=0.001, size=(14, 14, 14), steps=100
+[KMC] 开始算例 ls_04_16: T=600 K, Cu=0.0134, V=0.001, size=(16, 16, 16), steps=100
+[KMC] 开始算例 ls_05_18: T=600 K, Cu=0.0134, V=0.001, size=(18, 18, 18), steps=100
+[KMC] 开始算例 ls_06_20: T=600 K, Cu=0.0134, V=0.001, size=(20, 20, 20), steps=100
+[KMC] 开始算例 ls_07_22: T=600 K, Cu=0.0134, V=0.001, size=(22, 22, 22), steps=100
+[KMC] 开始算例 ls_08_24: T=600 K, Cu=0.0134, V=0.001, size=(24, 24, 24), steps=100
+[KMC] 开始算例 ls_09_26: T=600 K, Cu=0.0134, V=0.001, size=(26, 26, 26), steps=100
 [性能] 开始固定 Fe-Cu-vacancy 算例优化前后对比。
-[性能] size=(8, 8, 8): baseline=0.3347s, optimized=0.1539s, speedup=2.17x
-[性能] size=(10, 10, 10): baseline=0.4152s, optimized=0.2383s, speedup=1.74x
-[性能] size=(12, 12, 12): baseline=0.5281s, optimized=0.3141s, speedup=1.68x
+[性能] size=(8, 8, 8): baseline=10.9452s, optimized=0.1617s, speedup=67.67x
+[性能] size=(10, 10, 10): baseline=10.8553s, optimized=0.2475s, speedup=43.86x
+[性能] size=(12, 12, 12): baseline=11.2290s, optimized=0.3318s, speedup=33.84x
+[性能] size=(14, 14, 14): baseline=11.6647s, optimized=0.5857s, speedup=19.92x
+[性能] size=(16, 16, 16): baseline=12.3247s, optimized=0.8817s, speedup=13.98x
+[性能] size=(18, 18, 18): baseline=13.1887s, optimized=1.2155s, speedup=10.85x
+[性能] size=(20, 20, 20): baseline=14.0991s, optimized=1.7458s, speedup=8.08x
+[性能] size=(22, 22, 22): baseline=15.8542s, optimized=2.5826s, speedup=6.14x
+[性能] size=(24, 24, 24): baseline=17.6312s, optimized=3.4402s, speedup=5.13x
+[性能] size=(26, 26, 26): baseline=22.4980s, optimized=4.5848s, speedup=4.91x
 [完成] KMC 横向测试全部输出已生成。
 [完成] 输出清单=outputs/manifest.json

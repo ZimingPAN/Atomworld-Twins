@@ -313,6 +313,167 @@ def test_teacher_path_summary_legacy_mode_keeps_base_dim_only():
     assert summary.shape == (18,)
 
 
+def test_teacher_action_sequence_targets_preserve_order_and_rollout_changes():
+    candidate_positions = np.asarray(
+        [[0, 0, 0], [1, 1, 1], [2, 2, 2], [3, 3, 3]],
+        dtype=np.int32,
+    )
+    candidate_mask = np.ones((4,), dtype=np.float32)
+    current_types = np.asarray([mod.V_TYPE, mod.CU_TYPE, mod.FE_TYPE, mod.FE_TYPE], dtype=np.int64)
+    path_infos = [
+        {
+            "old_pos": np.asarray([0, 0, 0], dtype=np.int32),
+            "new_pos": np.asarray([1, 1, 1], dtype=np.int32),
+            "moving_type": mod.CU_TYPE,
+        },
+        {
+            "old_pos": np.asarray([1, 1, 1], dtype=np.int32),
+            "new_pos": np.asarray([2, 2, 2], dtype=np.int32),
+            "moving_type": mod.FE_TYPE,
+        },
+    ]
+
+    indices, mask, moving_type, order, rollout_changed, step_count, covered = mod._teacher_action_sequence_targets(
+        candidate_positions=candidate_positions,
+        candidate_mask=candidate_mask,
+        current_types=current_types,
+        path_infos=path_infos,
+    )
+
+    assert step_count == 2
+    assert covered == 2
+    assert indices[:2].tolist() == [[0, 1], [1, 2]]
+    assert mask[:2].tolist() == [1.0, 1.0]
+    assert moving_type[:2].tolist() == [mod.CU_TYPE, mod.FE_TYPE]
+    assert order[:2].tolist() == pytest.approx([0.0, 1.0])
+    assert rollout_changed.tolist() == [1.0, 1.0, 1.0, 0.0]
+
+
+def test_terminal_action_context_can_use_teacher_rollout_mask():
+    fallback_logits = torch.zeros((1, 3), dtype=torch.float32)
+    tensors = {
+        "candidate_mask": torch.tensor([[1.0, 1.0, 0.0]], dtype=torch.float32),
+        "teacher_action_rollout_changed_mask": torch.tensor([[1.0, 0.0, 1.0]], dtype=torch.float32),
+    }
+
+    logits = mod._terminal_action_context_logits_from_tensors(
+        tensors=tensors,
+        source="teacher_rollout",
+        fallback_logits=fallback_logits,
+    )
+
+    assert float(logits[0, 0].item()) == pytest.approx(6.0)
+    assert float(logits[0, 1].item()) == pytest.approx(-6.0)
+    assert float(logits[0, 2].item()) == pytest.approx(-20.0)
+
+
+def test_adaptive_boundary_reached_on_key_moving_type_after_min_k():
+    config = mod.AdaptiveBoundaryConfig(
+        mode="adaptive_key_event",
+        min_k=2,
+        key_moving_types=(mod.CU_TYPE,),
+    )
+    info = {"moving_type": mod.CU_TYPE, "delta_E": 0.0}
+
+    assert not mod._adaptive_boundary_reached(
+        config=config,
+        step_count=1,
+        latest_info=info,
+        touched_positions={(0, 0, 0), (1, 0, 0)},
+        cumulative_abs_delta_e=0.0,
+    )
+    assert mod._adaptive_boundary_reached(
+        config=config,
+        step_count=2,
+        latest_info=info,
+        touched_positions={(0, 0, 0), (1, 0, 0)},
+        cumulative_abs_delta_e=0.0,
+    )
+
+
+def test_collect_segments_adaptive_key_event_uses_realized_horizon(monkeypatch):
+    class FakeInner:
+        dims = np.array([10, 10, 10], dtype=np.int32)
+        NN1 = np.array([[1, 0, 0]], dtype=np.int32)
+
+        def __init__(self):
+            self.after = False
+
+        def get_vacancy_array(self):
+            if self.after:
+                return np.array([[1, 0, 0]], dtype=np.int32)
+            return np.array([[0, 0, 0]], dtype=np.int32)
+
+        def get_cu_array(self):
+            if self.after:
+                return np.array([[0, 0, 0]], dtype=np.int32)
+            return np.array([[1, 0, 0]], dtype=np.int32)
+
+    class FakeEnv:
+        cfg = {"reward_scale": 10.0}
+
+        def __init__(self):
+            self.env = FakeInner()
+
+        def reset(self):
+            self.env.after = False
+            return np.zeros((2, 2), dtype=np.float32)
+
+        def obs(self):
+            return np.zeros((2, 2), dtype=np.float32)
+
+        def step(self, _action):
+            self.env.after = True
+            info = {
+                "expected_delta_t": 0.25,
+                "delta_t": 0.3,
+                "total_rate": 4.0,
+                "delta_E": 0.2,
+                "dir_idx": 0,
+                "moving_type": mod.CU_TYPE,
+                "old_pos": np.array([0, 0, 0], dtype=np.int32),
+                "new_pos": np.array([1, 0, 0], dtype=np.int32),
+                "vac_idx": 0,
+            }
+            return np.ones((2, 2), dtype=np.float32), 2.0, False, info
+
+    monkeypatch.setattr(
+        mod,
+        "_build_candidate_positions",
+        lambda *_args, **_kwargs: (
+            [(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+            {(0, 0, 0): 0, (1, 0, 0): 1, (2, 0, 0): 2},
+            np.array([[0, 0, 0]], dtype=np.int32),
+        ),
+    )
+    monkeypatch.setattr(mod, "_global_summary", lambda _env: np.zeros((16,), dtype=np.float32))
+    monkeypatch.setattr(mod, "_sample_teacher_action", lambda _env, _rng: object())
+
+    samples, stats = _collect_segments(
+        env=FakeEnv(),
+        num_segments=1,
+        horizon_k=8,
+        max_seed_vacancies=1,
+        max_candidate_sites=4,
+        rng=np.random.default_rng(0),
+        max_segments_per_rollout=0,
+        teacher_candidate_augmentation=False,
+        adaptive_boundary_config=mod.AdaptiveBoundaryConfig(
+            mode="adaptive_key_event",
+            min_k=1,
+            candidate_horizon_source="actual",
+            key_moving_types=(mod.CU_TYPE,),
+        ),
+    )
+
+    assert len(samples) == 1
+    assert samples[0].horizon_k == 1
+    assert stats["adaptive_boundary_hits"] == 1
+    assert stats["adaptive_truncated_at_max"] == 0
+    assert stats["avg_realized_horizon"] == pytest.approx(1.0)
+    assert samples[0].candidate_mask.sum() == pytest.approx(2.0)
+
+
 def test_macro_duration_baseline_matches_k_over_total_rate():
     global_summary = torch.zeros((2, 16), dtype=torch.float32)
     global_summary[:, 10] = torch.log(torch.tensor([100.0, 25.0], dtype=torch.float32))
@@ -469,6 +630,7 @@ def test_predict_reward_and_durations_returns_expected_and_realized_heads():
         "realized_tau_mu",
         "realized_tau_log_sigma",
         "gate_logit",
+        "noop_risk_logit",
     }
     baseline = torch.tensor([math.log(4.0 / 100.0)], dtype=torch.float32)
     assert torch.allclose(outputs["expected_tau_mu"], baseline, atol=1e-6)
@@ -1034,6 +1196,741 @@ def test_duration_prior_path_training_freezes_encoders_and_reward_parameters():
         assert param.requires_grad == name.startswith(trainable_prefixes), name
 
 
+def test_action_support_head_only_training_freezes_non_action_support_parameters():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+
+    mod._apply_action_support_head_only_training(model)
+
+    for name, param in model.named_parameters():
+        assert param.requires_grad == name.startswith("action_support_head."), name
+
+
+def test_action_endpoint_heads_only_training_freezes_non_endpoint_parameters():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+
+    mod._apply_action_endpoint_heads_only_training(model)
+
+    trainable_prefixes = ("action_source_head.", "action_destination_head.")
+    for name, param in model.named_parameters():
+        assert param.requires_grad == name.startswith(trainable_prefixes), name
+
+
+def test_terminal_edit_support_head_only_training_freezes_non_terminal_parameters():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+
+    mod._apply_terminal_edit_support_head_only_training(model)
+
+    for name, param in model.named_parameters():
+        assert param.requires_grad == name.startswith("terminal_edit_support_head."), name
+
+
+def test_terminal_edit_support_decoder_conditions_on_action_sequence_logits():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+    site_latent = torch.randn(2, 5, 8)
+    patch_latent = torch.randn(2, 8)
+    predicted_next_global = torch.randn(2, model.global_latent_dim)
+    path_latent = torch.randn(2, 4)
+    horizon_k = torch.tensor([2, 4], dtype=torch.long)
+    current_types = torch.zeros((2, 5), dtype=torch.long)
+
+    low_action = torch.full((2, 5), -8.0)
+    high_action = torch.full((2, 5), 8.0)
+    low_logits = model.decode_terminal_edit_support(
+        site_latent=site_latent,
+        patch_latent=patch_latent,
+        predicted_next_global=predicted_next_global,
+        path_latent=path_latent,
+        horizon_k=horizon_k,
+        current_types=current_types,
+        action_sequence_logits=low_action,
+    )
+    high_logits = model.decode_terminal_edit_support(
+        site_latent=site_latent,
+        patch_latent=patch_latent,
+        predicted_next_global=predicted_next_global,
+        path_latent=path_latent,
+        horizon_k=horizon_k,
+        current_types=current_types,
+        action_sequence_logits=high_action,
+    )
+
+    assert low_logits.shape == (2, 5)
+    assert not torch.allclose(low_logits, high_logits)
+
+
+def test_action_edge_pair_support_head_only_training_freezes_non_support_parameters():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+
+    mod._apply_action_edge_pair_support_head_only_training(model)
+
+    for name, param in model.named_parameters():
+        assert param.requires_grad == name.startswith("action_edge_pair_support_head."), name
+
+
+def test_action_edge_pair_dual_heads_only_training_freezes_other_parameters():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+
+    mod._apply_action_edge_pair_dual_heads_only_training(model)
+
+    trainable_prefixes = ("action_edge_pair_head.", "action_edge_pair_support_head.")
+    for name, param in model.named_parameters():
+        assert param.requires_grad == name.startswith(trainable_prefixes), name
+
+
+def test_action_edge_pair_listwise_heads_only_training_freezes_other_parameters():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+
+    mod._apply_action_edge_pair_listwise_heads_only_training(model)
+
+    trainable_prefixes = (
+        "action_edge_pair_head.",
+        "action_edge_pair_support_head.",
+        "action_edge_pair_moving_type_head.",
+        "action_edge_pair_order_head.",
+        "candidate_quality_head.",
+    )
+    for name, param in model.named_parameters():
+        assert param.requires_grad == name.startswith(trainable_prefixes), name
+
+
+def test_vacancy_pair_heads_only_training_freezes_other_parameters():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+
+    mod._apply_vacancy_pair_heads_only_training(model)
+
+    trainable_prefixes = (
+        "vacancy_pair_head.",
+        "vacancy_pair_moving_type_head.",
+        "vacancy_pair_order_head.",
+    )
+    for name, param in model.named_parameters():
+        assert param.requires_grad == name.startswith(trainable_prefixes), name
+
+
+def test_vacancy_pair_interaction_head_only_training_freezes_other_parameters():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+
+    mod._apply_vacancy_pair_interaction_head_only_training(model)
+
+    for name, param in model.named_parameters():
+        assert param.requires_grad == name.startswith("vacancy_pair_interaction_head."), name
+
+
+def test_vacancy_pair_decoders_return_pairwise_shapes():
+    model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(2),
+        max_macro_k=4,
+    )
+    site_latent = torch.randn(2, 5, model.patch_latent_dim)
+    patch_latent = torch.randn(2, model.patch_latent_dim)
+    next_global = torch.randn(2, model.global_latent_dim)
+    path_latent = torch.randn(2, 4)
+    horizon_k = torch.tensor([2, 4], dtype=torch.long)
+    current_types = torch.tensor(
+        [
+            [mod.V_TYPE, mod.FE_TYPE, mod.CU_TYPE, mod.FE_TYPE, mod.CU_TYPE],
+            [mod.V_TYPE, mod.CU_TYPE, mod.FE_TYPE, mod.FE_TYPE, mod.CU_TYPE],
+        ],
+        dtype=torch.long,
+    )
+    pair_indices = torch.tensor([[[0, 1], [0, 2], [0, 4]], [[0, 1], [0, 2], [0, 4]]])
+
+    scores = model.decode_vacancy_pairs(
+        site_latent=site_latent,
+        patch_latent=patch_latent,
+        predicted_next_global=next_global,
+        path_latent=path_latent,
+        horizon_k=horizon_k,
+        current_types=current_types,
+        edge_pair_indices=pair_indices,
+    )
+    interaction_scores = model.decode_vacancy_pair_interaction(
+        site_latent=site_latent,
+        patch_latent=patch_latent,
+        predicted_next_global=next_global,
+        path_latent=path_latent,
+        horizon_k=horizon_k,
+        current_types=current_types,
+        edge_pair_indices=pair_indices,
+    )
+    moving_type_logits = model.decode_vacancy_pair_moving_type(
+        site_latent=site_latent,
+        patch_latent=patch_latent,
+        predicted_next_global=next_global,
+        path_latent=path_latent,
+        horizon_k=horizon_k,
+        current_types=current_types,
+        edge_pair_indices=pair_indices,
+    )
+    order_logits = model.decode_vacancy_pair_order(
+        site_latent=site_latent,
+        patch_latent=patch_latent,
+        predicted_next_global=next_global,
+        path_latent=path_latent,
+        horizon_k=horizon_k,
+        current_types=current_types,
+        edge_pair_indices=pair_indices,
+    )
+
+    assert scores.shape == (2, 3)
+    assert interaction_scores.shape == (2, 3)
+    assert moving_type_logits.shape == (2, 3, mod.NUM_SITE_TYPES)
+    assert order_logits.shape == (2, 3)
+
+
+def test_action_edge_pair_support_loss_separates_terminal_support_edges():
+    pair_logits = torch.tensor([[2.0, -2.0, 0.5]], dtype=torch.float32)
+    negative_logits = torch.tensor([[-1.0, 0.25, -0.5]], dtype=torch.float32)
+    edge_mask = torch.tensor([[1.0, 1.0, 1.0]], dtype=torch.float32)
+    support_mask = torch.tensor([[1.0, 0.0, 1.0]], dtype=torch.float32)
+
+    terms = mod._action_edge_pair_support_loss(
+        pair_logits,
+        negative_logits,
+        edge_mask,
+        support_mask,
+        negative_weight=1.0,
+        rank_margin_weight=1.0,
+        margin=0.5,
+    )
+
+    assert terms["support_prob"].item() > terms["nonsupport_prob"].item()
+    assert terms["rank_acc"].item() == pytest.approx(1.0)
+    assert terms["support_frac"].item() == pytest.approx(2.0 / 3.0)
+    assert terms["loss"].item() > 0.0
+
+
+def test_action_edge_pair_semantic_loss_uses_moving_type_and_order():
+    moving_type_logits = torch.tensor(
+        [[[0.0, 4.0, -1.0], [3.0, -2.0, 0.0]]],
+        dtype=torch.float32,
+    )
+    order_logits = torch.tensor([[3.0, -3.0]], dtype=torch.float32)
+    edge_mask = torch.tensor([[1.0, 1.0]], dtype=torch.float32)
+    moving_type = torch.tensor([[1, 0]], dtype=torch.long)
+    order = torch.tensor([[1.0, 0.0]], dtype=torch.float32)
+
+    terms = mod._action_edge_pair_semantic_loss(
+        moving_type_logits,
+        order_logits,
+        edge_mask,
+        moving_type,
+        order,
+    )
+
+    assert terms["moving_type_acc"].item() == pytest.approx(1.0)
+    assert terms["order_mae"].item() < 0.06
+    assert terms["loss"].item() > 0.0
+
+
+def test_terminal_vacancy_pair_targets_track_vacancy_identity_across_sequence():
+    candidate_mask = np.ones((4,), dtype=np.float32)
+    current_types = np.asarray([mod.V_TYPE, mod.FE_TYPE, mod.CU_TYPE, mod.FE_TYPE], dtype=np.int64)
+    target_types = np.asarray([mod.FE_TYPE, mod.CU_TYPE, mod.V_TYPE, mod.FE_TYPE], dtype=np.int64)
+    action_sequence_indices = np.asarray(
+        [
+            [0, 1],
+            [1, 2],
+            [-1, -1],
+            [-1, -1],
+        ],
+        dtype=np.int64,
+    )
+    action_sequence_mask = np.asarray([1.0, 1.0, 0.0, 0.0], dtype=np.float32)
+    action_sequence_moving_type = np.asarray([mod.FE_TYPE, mod.CU_TYPE, -1, -1], dtype=np.int64)
+    action_sequence_order = np.asarray([0.0, 1.0, 0.0, 0.0], dtype=np.float32)
+
+    pair_indices, pair_mask, pair_moving_type, pair_order, total_pairs, covered_pairs = (
+        mod._teacher_vacancy_displacement_pair_targets_from_sequence(
+            candidate_mask=candidate_mask,
+            current_types=current_types,
+            target_types=target_types,
+            action_sequence_indices=action_sequence_indices,
+            action_sequence_mask=action_sequence_mask,
+            action_sequence_moving_type=action_sequence_moving_type,
+            action_sequence_order=action_sequence_order,
+        )
+    )
+
+    assert total_pairs == 1
+    assert covered_pairs == 1
+    assert pair_mask.tolist() == [1.0, 0.0, 0.0, 0.0]
+    assert pair_indices[0].tolist() == [0, 2]
+    assert int(pair_moving_type[0]) == mod.FE_TYPE
+    assert float(pair_order[0]) == pytest.approx(1.0)
+
+
+def test_projection_logits_can_use_action_support_head():
+    change_logits = torch.tensor([[0.1, 0.2, 0.3]])
+    proposal_logits = torch.tensor([[1.0, 1.1, 1.2]])
+    action_support_logits = torch.tensor([[2.0, 2.1, 2.2]])
+
+    selected = mod._projection_logits_from_source(
+        change_logits=change_logits,
+        proposal_logits=proposal_logits,
+        action_support_logits=action_support_logits,
+        source="action_support",
+        blend_alpha=0.5,
+    )
+
+    assert torch.equal(selected, action_support_logits)
+
+
+def test_projection_logits_can_use_action_endpoint_heads():
+    change_logits = torch.tensor([[0.1, 0.2, 0.3]])
+    proposal_logits = torch.tensor([[1.0, 1.1, 1.2]])
+    action_support_logits = torch.tensor([[2.0, 2.1, 2.2]])
+    action_source_logits = torch.tensor([[3.0, 0.5, 4.0]])
+    action_destination_logits = torch.tensor([[0.1, 5.0, 2.0]])
+
+    selected = mod._projection_logits_from_source(
+        change_logits=change_logits,
+        proposal_logits=proposal_logits,
+        action_support_logits=action_support_logits,
+        action_source_logits=action_source_logits,
+        action_destination_logits=action_destination_logits,
+        source="action_endpoint",
+        blend_alpha=0.5,
+    )
+
+    assert torch.equal(selected, torch.maximum(action_source_logits, action_destination_logits))
+
+
+def test_same_source_nn1_edge_pair_negative_uses_legal_wrong_destination():
+    edge_pairs = torch.tensor([[[0, 1], [3, 4]]], dtype=torch.long)
+    positions = torch.tensor(
+        [
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 1.0, 1.0],
+                [39.0, 39.0, 39.0],
+                [5.0, 5.0, 5.0],
+                [6.0, 6.0, 6.0],
+                [4.0, 4.0, 4.0],
+            ]
+        ],
+        dtype=torch.float32,
+    )
+    candidate_mask = torch.ones((1, 6), dtype=torch.float32)
+    box_dims = torch.tensor([[40.0, 40.0, 40.0]], dtype=torch.float32)
+
+    negatives = mod._negative_action_edge_pair_indices(
+        edge_pairs,
+        candidate_positions=positions,
+        candidate_mask=candidate_mask,
+        box_dims=box_dims,
+        mode="same_source_nn1",
+    )
+
+    assert negatives[0, 0].tolist() == [0, 2]
+    assert negatives[0, 1].tolist() == [3, 5]
+
+
+def test_same_source_nn1_edge_pair_negative_falls_back_to_self_pair():
+    edge_pairs = torch.tensor([[[0, 1]]], dtype=torch.long)
+    positions = torch.tensor([[[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]], dtype=torch.float32)
+    candidate_mask = torch.ones((1, 2), dtype=torch.float32)
+    box_dims = torch.tensor([[40.0, 40.0, 40.0]], dtype=torch.float32)
+
+    negatives = mod._negative_action_edge_pair_indices(
+        edge_pairs,
+        candidate_positions=positions,
+        candidate_mask=candidate_mask,
+        box_dims=box_dims,
+        mode="same_source_nn1",
+    )
+
+    assert negatives[0, 0].tolist() == [0, 0]
+
+
+def test_same_source_nn1_edge_pair_negative_list_returns_multiple_destinations():
+    edge_pairs = torch.tensor([[[0, 1]]], dtype=torch.long)
+    positions = torch.tensor(
+        [
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 1.0, 1.0],
+                [39.0, 39.0, 39.0],
+                [1.0, 39.0, 1.0],
+            ]
+        ],
+        dtype=torch.float32,
+    )
+    candidate_mask = torch.ones((1, 4), dtype=torch.float32)
+    box_dims = torch.tensor([[40.0, 40.0, 40.0]], dtype=torch.float32)
+
+    negatives = mod._negative_action_edge_pair_indices_list(
+        edge_pairs,
+        candidate_positions=positions,
+        candidate_mask=candidate_mask,
+        box_dims=box_dims,
+        mode="same_source_nn1",
+        count=3,
+    )
+
+    assert negatives.shape == (1, 1, 3, 2)
+    assert negatives[0, 0, :, 0].tolist() == [0, 0, 0]
+    assert set(negatives[0, 0, :, 1].tolist()).issubset({2, 3})
+    assert 1 not in negatives[0, 0, :, 1].tolist()
+
+
+def test_dense_legal_edge_pair_negatives_use_global_vacancy_atom_pairs():
+    edge_pairs = torch.tensor([[[0, 1]]], dtype=torch.long)
+    current_types = torch.tensor([[mod.V_TYPE, mod.CU_TYPE, mod.V_TYPE, mod.CU_TYPE, mod.FE_TYPE]], dtype=torch.long)
+    positions = torch.tensor(
+        [
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 1.0, 1.0],
+                [5.0, 5.0, 5.0],
+                [6.0, 6.0, 6.0],
+                [4.0, 4.0, 4.0],
+            ]
+        ],
+        dtype=torch.float32,
+    )
+    candidate_mask = torch.ones((1, 5), dtype=torch.float32)
+    box_dims = torch.tensor([[40.0, 40.0, 40.0]], dtype=torch.float32)
+
+    negatives = mod._dense_legal_action_edge_pair_negative_indices(
+        edge_pairs,
+        current_types=current_types,
+        candidate_positions=positions,
+        candidate_mask=candidate_mask,
+        box_dims=box_dims,
+        count=2,
+    )
+
+    assert negatives.shape == (1, 1, 2, 2)
+    pairs = {tuple(item) for item in negatives[0, 0].tolist()}
+    assert pairs.issubset({(2, 3), (2, 4)})
+    assert (0, 1) not in pairs
+
+
+def test_dense_terminal_vacancy_pair_negatives_allow_nonlocal_destinations():
+    edge_pairs = torch.tensor([[[0, 3]]], dtype=torch.long)
+    current_types = torch.tensor([[mod.V_TYPE, mod.CU_TYPE, mod.V_TYPE, mod.CU_TYPE, mod.FE_TYPE]], dtype=torch.long)
+    candidate_mask = torch.ones((1, 5), dtype=torch.float32)
+
+    negatives = mod._dense_terminal_vacancy_pair_negative_indices(
+        edge_pairs,
+        current_types=current_types,
+        candidate_mask=candidate_mask,
+        count=3,
+    )
+
+    assert negatives.shape == (1, 1, 3, 2)
+    pairs = {tuple(item) for item in negatives[0, 0].tolist()}
+    assert pairs.issubset({(0, 1), (0, 4), (2, 1), (2, 3), (2, 4)})
+    assert (0, 3) not in pairs
+
+
+def test_structured_terminal_vacancy_pair_negatives_cover_source_destination_and_unpaired_cases():
+    vacancy_pairs = torch.tensor([[[0, 1], [3, 4]]], dtype=torch.long)
+    current_types = torch.tensor(
+        [[mod.V_TYPE, mod.CU_TYPE, mod.FE_TYPE, mod.V_TYPE, mod.CU_TYPE, mod.FE_TYPE]],
+        dtype=torch.long,
+    )
+    candidate_mask = torch.ones((1, 6), dtype=torch.float32)
+
+    negatives = mod._structured_terminal_vacancy_pair_negative_indices(
+        vacancy_pairs,
+        current_types=current_types,
+        candidate_mask=candidate_mask,
+        count_per_group=1,
+    )
+
+    assert negatives.shape == (1, 2, 3, 2)
+    positive_pairs = {(0, 1), (3, 4)}
+    for pair in negatives.reshape(-1, 2).tolist():
+        assert tuple(pair) not in positive_pairs
+
+    first = [tuple(pair) for pair in negatives[0, 0].tolist()]
+    assert first[0][0] == 0 and first[0][1] != 1
+    assert first[1][1] == 1 and first[1][0] != 0
+    assert first[2] in {(0, 4), (3, 1)}
+
+
+def test_pair_listwise_contrastive_loss_prefers_true_pair_over_negatives():
+    pair_mask = torch.tensor([[1.0, 1.0, 0.0]], dtype=torch.float32)
+    good_pos = torch.tensor([[4.0, 3.0, 0.0]], dtype=torch.float32)
+    good_neg = torch.tensor(
+        [
+            [
+                [0.0, -1.0, -2.0],
+                [0.5, 0.0, -1.0],
+                [9.0, 9.0, 9.0],
+            ]
+        ],
+        dtype=torch.float32,
+    )
+    bad_pos = torch.tensor([[0.0, -1.0, 0.0]], dtype=torch.float32)
+    bad_neg = torch.tensor(
+        [
+            [
+                [3.0, 2.0, 1.0],
+                [2.5, 1.0, 0.0],
+                [9.0, 9.0, 9.0],
+            ]
+        ],
+        dtype=torch.float32,
+    )
+
+    good = mod._pair_listwise_contrastive_loss(good_pos, good_neg, pair_mask)
+    bad = mod._pair_listwise_contrastive_loss(bad_pos, bad_neg, pair_mask)
+    empty = mod._pair_listwise_contrastive_loss(good_pos, good_neg, torch.zeros_like(pair_mask))
+
+    assert good["acc"].item() == 1.0
+    assert bad["acc"].item() == 0.0
+    assert good["loss"].item() < bad["loss"].item()
+    assert empty["loss"].item() == 0.0
+
+
+def test_action_edge_pair_target_tensors_can_select_terminal_vacancy_pairs():
+    tensors = {
+        "candidate_mask": torch.ones((1, 3), dtype=torch.float32),
+        "teacher_action_edge_pair_indices": torch.tensor([[[0, 1], [-1, -1], [-1, -1]]]),
+        "teacher_action_edge_pair_mask": torch.tensor([[1.0, 0.0, 0.0]]),
+        "teacher_action_edge_pair_support_mask": torch.tensor([[1.0, 0.0, 0.0]]),
+        "teacher_action_edge_pair_moving_type": torch.tensor([[mod.CU_TYPE, -1, -1]]),
+        "teacher_action_edge_pair_order": torch.tensor([[0.0, 0.0, 0.0]]),
+        "teacher_vacancy_pair_indices": torch.tensor([[[0, 2], [-1, -1], [-1, -1]]]),
+        "teacher_vacancy_pair_mask": torch.tensor([[1.0, 0.0, 0.0]]),
+        "teacher_vacancy_pair_moving_type": torch.tensor([[mod.FE_TYPE, -1, -1]]),
+        "teacher_vacancy_pair_order": torch.tensor([[1.0, 0.0, 0.0]]),
+    }
+
+    selected = mod._action_edge_pair_target_tensors(tensors, "vacancy_pair")
+
+    assert torch.equal(selected["indices"], tensors["teacher_vacancy_pair_indices"])
+    assert torch.equal(selected["support_mask"], tensors["teacher_vacancy_pair_mask"])
+    assert int(selected["moving_type"][0, 0].item()) == mod.FE_TYPE
+
+
+def test_action_edge_pair_losses_accept_listwise_negatives():
+    pair_logits = torch.tensor([[2.0, 0.0]], dtype=torch.float32)
+    negative_logits = torch.tensor([[[0.0, -1.0], [1.0, 2.0]]], dtype=torch.float32)
+    edge_mask = torch.tensor([[1.0, 1.0]], dtype=torch.float32)
+    support_mask = torch.tensor([[1.0, 0.0]], dtype=torch.float32)
+
+    edge_terms = mod._action_edge_pair_supervision_loss(
+        pair_logits,
+        negative_logits,
+        edge_mask,
+        negative_weight=1.0,
+        rank_margin_weight=1.0,
+        margin=0.5,
+    )
+    support_terms = mod._action_edge_pair_support_loss(
+        pair_logits,
+        negative_logits,
+        edge_mask,
+        support_mask,
+        negative_weight=1.0,
+        rank_margin_weight=1.0,
+        margin=0.5,
+    )
+
+    assert edge_terms["loss"].item() > 0.0
+    assert edge_terms["rank_acc"].item() == pytest.approx(0.5)
+    assert support_terms["loss"].item() > 0.0
+    assert support_terms["rank_acc"].item() == pytest.approx(1.0)
+
+
+def test_edge_pair_multiobjective_completion_source_maps_to_multiobjective():
+    assert (
+        long_eval_mod._edge_pair_completion_score_source("action_edge_pair_multiobjective_completion")
+        == "multiobjective"
+    )
+
+
+def test_vacancy_atom_pair_filter_requires_kmc_source_and_destination_types():
+    current_types = torch.tensor([[mod.V_TYPE, mod.CU_TYPE, mod.FE_TYPE, mod.V_TYPE]], dtype=torch.long)
+
+    assert long_eval_mod._is_valid_vacancy_atom_pair(
+        current_types,
+        0,
+        0,
+        1,
+        require_vacancy_atom_pair=True,
+    )
+    assert long_eval_mod._is_valid_vacancy_atom_pair(
+        current_types,
+        0,
+        0,
+        2,
+        require_vacancy_atom_pair=True,
+    )
+    assert not long_eval_mod._is_valid_vacancy_atom_pair(
+        current_types,
+        0,
+        1,
+        0,
+        require_vacancy_atom_pair=True,
+    )
+    assert not long_eval_mod._is_valid_vacancy_atom_pair(
+        current_types,
+        0,
+        0,
+        3,
+        require_vacancy_atom_pair=True,
+    )
+    assert long_eval_mod._is_valid_vacancy_atom_pair(
+        current_types,
+        0,
+        1,
+        3,
+        require_vacancy_atom_pair=False,
+    )
+
+
 def test_planner_selected_dataset_signature_records_mode_and_counts():
     args = SimpleNamespace(
         seed=3,
@@ -1067,6 +1964,14 @@ def test_planner_selected_dataset_signature_records_mode_and_counts():
         planner_selected_allow_uncovered_reward_only=True,
         teacher_path_summary_mode="stepwise",
         teacher_mode="kmc",
+        natural_teacher_backend="kmc",
+        segment_boundary_mode="adaptive_key_event",
+        adaptive_min_k=2,
+        adaptive_candidate_horizon_source="actual",
+        adaptive_key_moving_types=[1],
+        adaptive_min_touched_sites=4,
+        adaptive_abs_delta_e_threshold=0.1,
+        adaptive_cumulative_abs_delta_e_threshold=0.3,
         neural_teacher_temperature=1.0,
         neural_teacher_epsilon=0.0,
         max_segments_per_rollout=50,
@@ -1088,6 +1993,11 @@ def test_planner_selected_dataset_signature_records_mode_and_counts():
     assert signature["planner_selected_tau_source"] == "baseline"
     assert signature["planner_selected_reward_prediction_source"] == "projected"
     assert signature["planner_selected_allow_uncovered_reward_only"] is True
+    assert signature["natural_teacher_backend"] == "kmc"
+    assert signature["segment_boundary_mode"] == "adaptive_key_event"
+    assert signature["adaptive_min_k"] == 2
+    assert signature["adaptive_candidate_horizon_source"] == "actual"
+    assert signature["adaptive_key_moving_types"] == [1]
 
 
 def test_train_planner_candidate_selection_matches_long_eval_semantics():
@@ -1578,6 +2488,67 @@ def test_eval_cache_validation_accepts_mixed_k_signature(tmp_path):
         )
 
 
+def test_eval_cache_validation_accepts_adaptive_realized_horizon(tmp_path):
+    sample = mod.MacroSegmentSample(
+        start_obs=np.zeros((4,), dtype=np.float32),
+        next_obs=np.zeros((4,), dtype=np.float32),
+        start_vacancy_positions=np.asarray([[0, 0, 0]], dtype=np.int32),
+        start_cu_positions=np.asarray([[1, 0, 0]], dtype=np.int32),
+        global_summary=np.zeros((16,), dtype=np.float32),
+        teacher_path_summary=np.zeros((teacher_path_summary_dim(8),), dtype=np.float32),
+        candidate_positions=np.zeros((4, 3), dtype=np.float32),
+        nearest_vacancy_offset=np.zeros((4, 3), dtype=np.float32),
+        reach_depth=np.zeros((4,), dtype=np.float32),
+        is_start_vacancy=np.zeros((4,), dtype=np.float32),
+        current_types=np.zeros((4,), dtype=np.int64),
+        target_types=np.zeros((4,), dtype=np.int64),
+        candidate_mask=np.ones((4,), dtype=np.float32),
+        changed_mask=np.zeros((4,), dtype=np.float32),
+        tau_exp=1.0,
+        tau_real=1.0,
+        reward_sum=0.0,
+        horizon_k=1,
+        box_dims=np.asarray([10.0, 10.0, 10.0], dtype=np.float32),
+    )
+    payload = {
+        "train": [],
+        "val": [sample.__dict__],
+        "stats": {},
+        "signature": {
+            "dataset_version": 12,
+            "segment_ks": [4, 8],
+            "summary_horizon_k": 8,
+            "segment_boundary_mode": "adaptive_key_event",
+        },
+    }
+    cache_path = tmp_path / "adaptive_segments.pt"
+    torch.save(payload, cache_path)
+
+    samples, _stats, signature = eval_mod._load_samples(
+        cache_path,
+        "val",
+        0,
+        expected_segment_ks=[4, 8],
+        expected_summary_horizon_k=8,
+    )
+
+    assert len(samples) == 1
+    assert samples[0].horizon_k == 1
+    assert signature["segment_boundary_mode"] == "adaptive_key_event"
+
+    payload["val"][0] = dict(payload["val"][0])
+    payload["val"][0]["horizon_k"] = 9
+    torch.save(payload, cache_path)
+    with pytest.raises(ValueError, match="adaptive sample"):
+        eval_mod._load_samples(
+            cache_path,
+            "val",
+            0,
+            expected_segment_ks=[4, 8],
+            expected_summary_horizon_k=8,
+        )
+
+
 def test_init_from_resizes_path_posterior_for_multik_summary():
     old_model = MacroDreamerEditModel(
         max_vacancies=4,
@@ -1625,6 +2596,92 @@ def test_init_from_resizes_path_posterior_for_multik_summary():
     old = old_state["path_posterior.net.1.weight"]
     assert torch.allclose(loaded[: old.shape[0], : old.shape[1]], old)
     assert torch.allclose(loaded[:, old.shape[1] :], torch.zeros_like(loaded[:, old.shape[1] :]))
+
+
+def test_init_from_resizes_k_embedding_for_larger_horizon_set():
+    old_model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(8),
+        max_macro_k=8,
+    )
+    new_model = MacroDreamerEditModel(
+        max_vacancies=4,
+        max_defects=8,
+        max_shells=4,
+        stats_dim=10,
+        lattice_size=(10, 10, 10),
+        neighbor_order="2NN",
+        dim_latent=4,
+        graph_hidden_size=8,
+        patch_hidden_size=16,
+        patch_latent_dim=8,
+        path_latent_dim=4,
+        global_summary_dim=16,
+        teacher_path_summary_dim=teacher_path_summary_dim(1024),
+        max_macro_k=1024,
+    )
+    old_state = old_model.state_dict()
+
+    _missing, _unexpected, resized, skipped = _load_model_weights(
+        new_model,
+        old_state,
+        allow_path_posterior_resize=True,
+    )
+
+    assert "k_embed.weight" in resized
+    assert not skipped
+    loaded = new_model.state_dict()["k_embed.weight"]
+    old = old_state["k_embed.weight"]
+    assert torch.allclose(loaded[: old.shape[0]], old)
+    assert torch.allclose(loaded[old.shape[0] :], torch.zeros_like(loaded[old.shape[0] :]))
+
+
+def test_large_horizon_candidate_build_stops_at_candidate_cap():
+    class FakeInner:
+        dims = np.array([64, 64, 64], dtype=np.int32)
+        NN1 = np.array(
+            [
+                [1, 0, 0],
+                [-1, 0, 0],
+                [0, 1, 0],
+                [0, -1, 0],
+                [0, 0, 1],
+                [0, 0, -1],
+            ],
+            dtype=np.int32,
+        )
+        diffusion_rates = [[1.0 for _ in range(6)]]
+
+        def _ensure_diffusion_rates(self):
+            return None
+
+        def get_vacancy_array(self):
+            return np.array([[32, 32, 32]], dtype=np.int32)
+
+    class FakeEnv:
+        env = FakeInner()
+
+    positions, depth_map, _seeds = mod._build_candidate_positions(
+        FakeEnv(),
+        horizon_k=1024,
+        max_seed_vacancies=1,
+        max_candidate_sites=32,
+    )
+
+    assert len(positions) == 32
+    assert len(depth_map) >= 32
+    assert max(depth_map[pos] for pos in positions) < 1024
 
 
 def test_projection_uses_per_sample_max_changed_sites_cap():
@@ -1689,6 +2746,387 @@ def test_long_eval_planner_rejects_projected_noop_candidates():
     ]
 
     assert long_eval_mod._choose_planner_candidate(candidates, min_projected_changed_sites=2) is None
+
+
+def test_candidate_joint_diagnostic_summary_tracks_selected_and_oracle_bounds():
+    segments = [
+        {
+            "index": 0,
+            "planner_candidates": [
+                {
+                    "candidate_joint_diagnostic": {
+                        "segment_k": 8,
+                        "selected_by_planner": True,
+                        "pre_oracle_selection_score": 3.0,
+                        "site_f1": 0.2,
+                        "vacancy_pair_f1": 0.1,
+                        "teacher_reward_sum": 1.0,
+                        "teacher_tau_exp": 2.0,
+                        "projected_changed_count": 100.0,
+                        "teacher_changed_count": 20.0,
+                        "vacancy_pair_selected_count": 50.0,
+                        "vacancy_pair_teacher_count": 10.0,
+                    },
+                    "vacancy_pair_projection_diagnostic": {
+                        "candidate_pair_count": 4,
+                        "selected_pair_count": 2,
+                        "selected_pairs": [{"source_position": [0, 0, 0], "destination_position": [1, 0, 0]}],
+                        "factorized_pair_score_count": 4,
+                        "factorized_pair_scores": [
+                            {
+                                "rank": 1,
+                                "source_position": [0, 0, 0],
+                                "destination_position": [1, 0, 0],
+                                "score": 1.0,
+                                "source_score": 0.4,
+                                "destination_score": 0.3,
+                            }
+                        ],
+                    },
+                },
+                {
+                    "candidate_joint_diagnostic": {
+                        "segment_k": 32,
+                        "selected_by_planner": False,
+                        "pre_oracle_selection_score": 1.0,
+                        "site_f1": 0.6,
+                        "vacancy_pair_f1": 0.7,
+                        "teacher_reward_sum": 0.5,
+                        "teacher_tau_exp": 1.0,
+                        "projected_changed_count": 18.0,
+                        "teacher_changed_count": 20.0,
+                        "vacancy_pair_selected_count": 9.0,
+                        "vacancy_pair_teacher_count": 10.0,
+                    }
+                },
+            ],
+        }
+    ]
+
+    summary = long_eval_mod._candidate_joint_diagnostic_summary(segments)
+
+    assert summary["candidate_count"] == 2
+    assert summary["selected_by_planner"]["avg_site_f1"] == pytest.approx(0.2)
+    assert summary["selector_upper_bounds"]["site_f1"]["avg_site_f1"] == pytest.approx(0.6)
+    assert summary["selector_upper_bounds"]["pre_oracle_selection_score"]["avg_site_f1"] == pytest.approx(0.2)
+    compact = long_eval_mod._planner_candidates_for_output(
+        segments[0]["planner_candidates"],
+        compact=True,
+    )
+    assert compact[0]["candidate_joint_diagnostic"]["selected_by_planner"] is True
+    assert "selected_pairs" not in compact[0].get("vacancy_pair_projection_diagnostic", {})
+    assert compact[0]["vacancy_pair_projection_diagnostic"]["factorized_pair_score_count"] == 4
+    assert compact[0]["vacancy_pair_projection_diagnostic"]["factorized_pair_scores"][0]["source_score"] == 0.4
+
+
+def test_vacancy_pair_rank_summary_flattens_into_candidate_joint_diagnostics():
+    selected = {
+        "segment_k": 8,
+        "selection_score": 1.0,
+        "vacancy_pair_projection_diagnostic": {
+            "ranked_pair_score_count": 4,
+            "selected_pair_count": 2,
+            "ranked_pair_scores": [
+                {
+                    "rank": 1,
+                    "source_position": [0, 0, 0],
+                    "destination_position": [1, 0, 0],
+                    "moving_type": 2,
+                    "score": 0.9,
+                },
+                {
+                    "rank": 2,
+                    "source_position": [2, 0, 0],
+                    "destination_position": [3, 0, 0],
+                    "moving_type": 1,
+                    "score": 0.8,
+                },
+                {
+                    "rank": 3,
+                    "source_position": [0, 0, 0],
+                    "destination_position": [3, 0, 0],
+                    "moving_type": 2,
+                    "score": 0.7,
+                },
+            ],
+            "factorized_pair_score_count": 3,
+            "factorized_pair_scores": [
+                {
+                    "rank": 1,
+                    "source_position": [0, 0, 0],
+                    "destination_position": [1, 0, 0],
+                    "moving_type": 2,
+                    "score": 0.9,
+                    "source_score": 0.4,
+                    "destination_score": 0.2,
+                },
+                {
+                    "rank": 3,
+                    "source_position": [0, 0, 0],
+                    "destination_position": [3, 0, 0],
+                    "moving_type": 2,
+                    "score": 0.7,
+                    "source_score": 0.4,
+                    "destination_score": 0.1,
+                },
+            ],
+        },
+    }
+    teacher_segment = {
+        "reward_sum": 1.0,
+        "tau_exp": 2.0,
+        "vacancy_pair_positions": [
+            {
+                "source": [0, 0, 0],
+                "destination": [1, 0, 0],
+                "moving_type": 2,
+            },
+            {
+                "source": [2, 0, 0],
+                "destination": [3, 0, 0],
+                "moving_type": 1,
+            },
+        ],
+    }
+
+    rank_summary = long_eval_mod._vacancy_pair_rank_summary(selected, teacher_segment)
+    record = long_eval_mod._candidate_joint_diagnostic_record(
+        selected,
+        {"f1": 0.25, "projected_changed_count": 2.0, "teacher_changed_count": 4.0},
+        {"f1": 0.5, "selected_pair_count": 2.0, "teacher_pair_count": 2.0},
+        teacher_segment,
+        rank_summary,
+    )
+    grouped = long_eval_mod._candidate_joint_group_summary([record])
+
+    assert rank_summary["teacher_pair_found_recall"] == pytest.approx(1.0)
+    assert rank_summary["teacher_pair_rank_mean"] == pytest.approx(1.5)
+    assert rank_summary["teacher_pair_mrr"] == pytest.approx(0.75)
+    assert rank_summary["teacher_pair_typed_rank_accuracy"] == pytest.approx(1.0)
+    assert rank_summary["teacher_pair_recall_at_rank"]["8"] == pytest.approx(1.0)
+    assert rank_summary["topk_false_positive_rate"]["8"] == pytest.approx(1.0 / 3.0)
+    assert rank_summary["topk_true_pair_count"]["8"] == 2
+    assert rank_summary["topk_source_hard_negative_count"]["8"] == 1
+    assert rank_summary["topk_destination_hard_negative_count"]["8"] == 1
+    assert rank_summary["topk_source_destination_unpaired_count"]["8"] == 1
+    assert rank_summary["topk_true_score_mean"]["8"] == pytest.approx(0.85)
+    assert rank_summary["topk_false_score_mean"]["8"] == pytest.approx(0.7)
+    assert record["vacancy_pair_rank_mean"] == pytest.approx(1.5)
+    assert record["vacancy_pair_rank_recall_at_8"] == pytest.approx(1.0)
+    assert grouped["avg_vacancy_pair_rank_percentile_mean"] == pytest.approx(0.375)
+
+    selected["teacher_overlap_oracle"] = {"vacancy_pair_rank": rank_summary}
+    long_eval_mod._annotate_factorized_vacancy_pairs(selected, teacher_segment)
+    factorized = selected["vacancy_pair_projection_diagnostic"]["factorized_pair_scores"]
+    assert factorized[0]["pair_label"] == "true_pair"
+    assert factorized[1]["pair_label"] == "source_destination_unpaired"
+    compact = long_eval_mod._planner_candidates_for_output([selected], compact=True)
+    compact_rank = compact[0]["teacher_overlap_oracle"]["vacancy_pair_rank"]
+    assert compact_rank["teacher_pair_mrr"] == pytest.approx(0.75)
+    assert compact_rank["topk_source_destination_unpaired_count"]["8"] == 1
+    compact_factorized = compact[0]["vacancy_pair_projection_diagnostic"]["factorized_pair_scores"]
+    assert compact_factorized[0]["pair_label"] == "true_pair"
+
+
+def _dummy_v125_pareto_spec(weight_idx: int = 8) -> dict[str, object]:
+    models = {}
+    for target in long_eval_mod._PARETO_TARGETS:
+        weights = [0.0] * 46
+        weights[weight_idx] = 1.0
+        models[target] = {
+            "weights": weights,
+            "mean": [0.0] * 45,
+            "std": [1.0] * 45,
+            "target_mean": 0.0,
+            "target_std": 1.0,
+        }
+    return {"feature_dim": 45, "models": models}
+
+
+def _dummy_v131_recall_floor_spec() -> dict[str, object]:
+    models = {}
+    for target in long_eval_mod._PARETO_TARGETS:
+        weights = [0.0] * 46
+        if target == "pair_recall":
+            # Feature 30 is the raw budget in the 45-D live candidate-budget vector.
+            weights[30] = 0.01
+        models[target] = {
+            "weights": weights,
+            "mean": [0.0] * 45,
+            "std": [1.0] * 45,
+            "target_mean": 0.0,
+            "target_std": 1.0,
+        }
+    return {
+        "feature_dim": 45,
+        "policy": {"pair_recall_floor": 0.6},
+        "models": models,
+    }
+
+
+def _dummy_v125_candidate(score: float, selection_score: float) -> dict[str, object]:
+    pairs = [
+        {"score": score, "vacancy_score": score, "energy_score": score * 0.5},
+        {"score": score - 0.1, "vacancy_score": score - 0.1, "energy_score": score * 0.25},
+    ]
+    return {
+        "segment_k": 8,
+        "selection_score": selection_score,
+        "reachability_violation": 0.0,
+        "projected_changed_count": 4.0,
+        "predicted_reward_sum": score,
+        "predicted_delta_e": score,
+        "predicted_expected_tau": 2.0,
+        "predicted_noop_risk_prob": 0.1,
+        "candidate_quality_score": score,
+        "proposal_support_density": 0.2,
+        "planner_edge_completion_support_count": 32.0,
+        "planner_projection_change_source": "vacancy_pair_completion",
+        "vacancy_pair_projection_diagnostic": {
+            "selected_pair_count": 32,
+            "factorized_pair_scores": pairs,
+        },
+    }
+
+
+def _dummy_v131_candidate(score: float, selection_score: float) -> dict[str, object]:
+    candidate = _dummy_v125_candidate(score=score, selection_score=selection_score)
+    candidate["vacancy_pair_projection_diagnostic"] = {
+        "selected_pair_count": 128,
+        "factorized_pair_scores": [
+            {"score": float(score) - 0.001 * float(idx), "vacancy_score": float(score), "energy_score": float(score)}
+            for idx in range(128)
+        ],
+    }
+    return candidate
+
+
+def test_v125_pareto_selector_diagnostic_builds_label_clean_features_without_changing_scores():
+    candidates = [
+        _dummy_v125_candidate(score=0.2, selection_score=10.0),
+        _dummy_v125_candidate(score=0.9, selection_score=1.0),
+    ]
+
+    stats = long_eval_mod._apply_candidate_pareto_selector(
+        candidates,
+        selector_spec=_dummy_v125_pareto_spec(),
+        mode="diagnostic",
+        weight=1.0,
+        pair_score_field="score",
+        min_projected_changed_sites=2,
+    )
+
+    assert stats["enabled"] is True
+    assert stats["feature_row_count"] == 2 * len(long_eval_mod._PARETO_BUDGETS)
+    assert stats["missing_pair_score_candidate_count"] == 0
+    assert stats["applied"] is False
+    assert candidates[0]["selection_score"] == pytest.approx(10.0)
+    assert candidates[1]["selection_score"] == pytest.approx(1.0)
+    selector_record = candidates[1]["planner_candidate_pareto_selector"]
+    assert selector_record["feature_dim"] == 45
+    assert selector_record["budget_applied_to_projection"] is False
+    assert selector_record["teacher_label_fields_used"] is False
+
+
+def test_v125_pareto_selector_replace_updates_candidate_scores_from_live_pair_scores():
+    candidates = [
+        _dummy_v125_candidate(score=0.2, selection_score=10.0),
+        _dummy_v125_candidate(score=0.9, selection_score=1.0),
+    ]
+
+    stats = long_eval_mod._apply_candidate_pareto_selector(
+        candidates,
+        selector_spec=_dummy_v125_pareto_spec(),
+        mode="replace",
+        weight=1.0,
+        pair_score_field="score",
+        min_projected_changed_sites=2,
+    )
+    selected = long_eval_mod._choose_planner_candidate(candidates, min_projected_changed_sites=2)
+
+    assert stats["applied"] is True
+    assert candidates[1]["selection_score"] > candidates[0]["selection_score"]
+    assert selected is candidates[1]
+
+
+def test_v131_recall_floor_selector_uses_spec_floor_before_balanced_budget_choice():
+    candidates = [_dummy_v131_candidate(score=0.5, selection_score=10.0)]
+
+    stats = long_eval_mod._apply_candidate_pareto_selector(
+        candidates,
+        selector_spec=_dummy_v131_recall_floor_spec(),
+        mode="diagnostic",
+        weight=1.0,
+        pair_score_field="score",
+        selector_policy="recall_floor_balanced",
+        recall_floor=None,
+        min_projected_changed_sites=2,
+    )
+
+    selector_record = candidates[0]["planner_candidate_pareto_selector"]
+    assert stats["selector_policy"] == "recall_floor_balanced"
+    assert stats["recall_floor"] == pytest.approx(0.6)
+    assert stats["selected_budget"] == 64
+    assert stats["selected_prediction_pair_recall"] == pytest.approx(0.64)
+    assert stats["selected_pair_recall_floor_passed"] is True
+    assert selector_record["selector_policy"] == "recall_floor_balanced"
+    assert selector_record["budget"] == 64
+    assert selector_record["pair_recall_floor_passed"] is True
+
+
+def test_v134_recall_floor_selector_respects_min_budget_guard():
+    candidates = [_dummy_v131_candidate(score=0.5, selection_score=10.0)]
+
+    stats = long_eval_mod._apply_candidate_pareto_selector(
+        candidates,
+        selector_spec=_dummy_v131_recall_floor_spec(),
+        mode="diagnostic",
+        weight=1.0,
+        pair_score_field="score",
+        selector_policy="recall_floor_balanced",
+        recall_floor=None,
+        min_budget=96,
+        clip_probability_predictions=True,
+        min_projected_changed_sites=2,
+    )
+
+    selector_record = candidates[0]["planner_candidate_pareto_selector"]
+    assert stats["selected_budget"] == 96
+    assert stats["selected_prediction_pair_recall"] == pytest.approx(0.96)
+    assert stats["selected_min_budget_passed"] is True
+    assert selector_record["min_budget"] == 96
+    assert selector_record["min_budget_passed"] is True
+    assert selector_record["clip_probability_predictions"] is True
+
+
+def test_v137_pareto_teacher_label_after_budget_validation_allows_zero_weight_add_mode():
+    args = SimpleNamespace(
+        planner_candidate_pareto_teacher_label_after_budget_projection=True,
+        planner_candidate_pareto_selector_spec="selector.json",
+        planner_candidate_pareto_apply_budget_to_projection=True,
+        planner_teacher_overlap_oracle_mode="add",
+        planner_teacher_overlap_oracle_weight=0.0,
+    )
+
+    long_eval_mod._validate_pareto_teacher_label_diagnostic(args)
+
+
+def test_v137_pareto_teacher_label_after_budget_validation_rejects_selection_changing_oracle():
+    args = SimpleNamespace(
+        planner_candidate_pareto_teacher_label_after_budget_projection=True,
+        planner_candidate_pareto_selector_spec="selector.json",
+        planner_candidate_pareto_apply_budget_to_projection=True,
+        planner_teacher_overlap_oracle_mode="replace",
+        planner_teacher_overlap_oracle_weight=0.0,
+    )
+
+    with pytest.raises(ValueError, match="oracle_mode add"):
+        long_eval_mod._validate_pareto_teacher_label_diagnostic(args)
+
+    args.planner_teacher_overlap_oracle_mode = "add"
+    args.planner_teacher_overlap_oracle_weight = 0.5
+    with pytest.raises(ValueError, match="oracle_weight 0.0"):
+        long_eval_mod._validate_pareto_teacher_label_diagnostic(args)
 
 
 def test_long_eval_teacher_segment_marks_lattice_noop(monkeypatch):

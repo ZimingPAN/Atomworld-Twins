@@ -28,6 +28,8 @@ def parse_args() -> argparse.Namespace:
                         help="Expected tau source for reported paired metrics. 'blend' interpolates log tau between CTMC baseline and model.")
     parser.add_argument("--duration_blend_alpha", type=float, default=1.0,
                         help="For --duration_source blend, alpha in log_tau = (1-alpha)*baseline + alpha*model.")
+    parser.add_argument("--reward_edit_context_source", type=str, default=None, choices=["default", "none"],
+                        help="Override checkpoint reward/tau edit-context source. 'none' keeps patch+k context but zeros edit-summary features.")
     return parser.parse_args()
 
 
@@ -137,12 +139,26 @@ def _load_samples(
                 f"Dataset cache summary_horizon_k={cache_summary_horizon_k} does not match checkpoint summary_horizon_k={int(expected_summary_horizon_k)}"
             )
     samples = [mod.MacroSegmentSample(**item) for item in payload[split]]
-    expected_set = set(expected_segment_ks)
-    mismatched_sample = next((sample for sample in samples if int(sample.horizon_k) not in expected_set), None)
-    if mismatched_sample is not None:
-        raise ValueError(
-            f"Found sample with horizon_k={int(mismatched_sample.horizon_k)} in cache split {split}, expected one of {expected_segment_ks}"
+    boundary_mode = str(signature.get("segment_boundary_mode", "fixed_k"))
+    if boundary_mode == "adaptive_key_event":
+        max_horizon = int(signature.get("summary_horizon_k") or expected_summary_horizon_k or max(expected_segment_ks))
+        min_horizon = 1
+        mismatched_sample = next(
+            (sample for sample in samples if int(sample.horizon_k) < min_horizon or int(sample.horizon_k) > max_horizon),
+            None,
         )
+        if mismatched_sample is not None:
+            raise ValueError(
+                f"Found adaptive sample with horizon_k={int(mismatched_sample.horizon_k)} in cache split {split}, "
+                f"expected {min_horizon} <= horizon_k <= {max_horizon}"
+            )
+    else:
+        expected_set = set(expected_segment_ks)
+        mismatched_sample = next((sample for sample in samples if int(sample.horizon_k) not in expected_set), None)
+        if mismatched_sample is not None:
+            raise ValueError(
+                f"Found sample with horizon_k={int(mismatched_sample.horizon_k)} in cache split {split}, expected one of {expected_segment_ks}"
+            )
     if limit > 0:
         samples = samples[:limit]
     return samples, payload.get("stats", {}), signature
@@ -157,6 +173,7 @@ def main() -> None:
     model = _build_model(ckpt, args.device)
     reward_scale = float(ckpt["args"].get("reward_scale", 1.0))
     reward_prediction_source = str(ckpt["args"].get("reward_prediction_source", "raw"))
+    reward_edit_context_source = str(args.reward_edit_context_source or ckpt["args"].get("reward_edit_context_source", "default"))
     segment_ks = _segment_ks_from_ckpt_args(ckpt["args"])
     segment_k = int(segment_ks[0]) if len(segment_ks) == 1 else int(max(segment_ks))
 
@@ -171,6 +188,8 @@ def main() -> None:
 
     pred_reward_sum = []
     true_reward_sum = []
+    pred_noop_risk = []
+    true_noop_risk = []
     pred_tau = []
     pred_realized_tau = []
     pred_realized_tau_mu = []
@@ -211,6 +230,11 @@ def main() -> None:
                 horizon_k=tensors["horizon_k"],
                 current_types=tensors["current_types"],
             )
+            reward_change_logits, reward_type_logits = mod._select_reward_edit_context(
+                reward_edit_context_source,
+                change_logits,
+                raw_type_logits,
+            )
             duration_outputs = mod._predict_reward_and_duration_outputs(
                 model,
                 global_latent,
@@ -219,8 +243,8 @@ def main() -> None:
                 tensors["global_summary"],
                 tensors["horizon_k"],
                 patch_latent=patch_latent,
-                change_logits=change_logits,
-                type_logits=raw_type_logits,
+                change_logits=reward_change_logits,
+                type_logits=reward_type_logits,
                 current_types=tensors["current_types"],
                 candidate_mask=tensors["candidate_mask"],
             )
@@ -250,6 +274,11 @@ def main() -> None:
                     projected_types=projected_types,
                     candidate_mask=tensors["candidate_mask"],
                 )
+                projected_change_logits, projected_type_logits = mod._select_reward_edit_context(
+                    reward_edit_context_source,
+                    projected_change_logits,
+                    projected_type_logits,
+                )
                 projected_duration_outputs = mod._predict_reward_and_duration_outputs(
                     model,
                     global_latent,
@@ -263,8 +292,7 @@ def main() -> None:
                     current_types=tensors["current_types"],
                     candidate_mask=tensors["candidate_mask"],
                 )
-                duration_outputs["reward"] = projected_duration_outputs["reward"]
-                duration_outputs["gate_logit"] = projected_duration_outputs["gate_logit"]
+                duration_outputs = projected_duration_outputs
             reward_hat = duration_outputs["reward"]
             tau_mu = duration_outputs["expected_tau_mu"]
             tau_log_sigma = duration_outputs["expected_tau_log_sigma"]
@@ -283,10 +311,12 @@ def main() -> None:
                 realized_tau_mu = tau_mu
                 realized_tau_log_sigma = tau_log_sigma
             gate_logit = duration_outputs["gate_logit"]
+            noop_risk_logit = duration_outputs.get("noop_risk_logit", torch.zeros_like(reward_hat))
             gated_reward = reward_hat * torch.sigmoid(gate_logit)
             batch_pred_reward = gated_reward.detach().cpu().numpy()
             batch_pred_reward_raw = reward_hat.detach().cpu().numpy()
             batch_pred_reward_gate = torch.sigmoid(gate_logit).detach().cpu().numpy()
+            batch_pred_noop_risk = torch.sigmoid(noop_risk_logit).detach().cpu().numpy()
             batch_pred_tau = torch.exp(reported_tau_mu).detach().cpu().numpy()
             batch_model_tau = torch.exp(tau_mu).detach().cpu().numpy()
             batch_baseline_tau = torch.exp(baseline_tau_mu).detach().cpu().numpy()
@@ -294,11 +324,12 @@ def main() -> None:
             batch_pred_realized_tau_mu = realized_tau_mu.detach().cpu().numpy()
             batch_pred_realized_tau_log_sigma = realized_tau_log_sigma.detach().cpu().numpy()
 
-            for sample, item_pred_reward, item_pred_reward_raw, item_pred_reward_gate, item_pred_tau, item_model_tau, item_baseline_tau, item_pred_realized_tau, item_pred_realized_tau_mu, item_pred_realized_tau_log_sigma in zip(
+            for sample, item_pred_reward, item_pred_reward_raw, item_pred_reward_gate, item_pred_noop_risk, item_pred_tau, item_model_tau, item_baseline_tau, item_pred_realized_tau, item_pred_realized_tau_mu, item_pred_realized_tau_log_sigma in zip(
                 batch,
                 batch_pred_reward,
                 batch_pred_reward_raw,
                 batch_pred_reward_gate,
+                batch_pred_noop_risk,
                 batch_pred_tau,
                 batch_model_tau,
                 batch_baseline_tau,
@@ -308,6 +339,8 @@ def main() -> None:
             ):
                 pred_reward_sum.append(float(item_pred_reward))
                 true_reward_sum.append(float(sample.reward_sum))
+                pred_noop_risk.append(float(item_pred_noop_risk))
+                true_noop_risk.append(float(np.sum(sample.changed_mask) <= 0.0))
                 pred_tau.append(float(item_pred_tau))
                 pred_realized_tau.append(float(item_pred_realized_tau))
                 pred_realized_tau_mu.append(float(item_pred_realized_tau_mu))
@@ -326,6 +359,8 @@ def main() -> None:
                         "predicted_reward_sum": float(item_pred_reward),
                         "predicted_reward_raw": float(item_pred_reward_raw),
                         "predicted_reward_gate_prob": float(item_pred_reward_gate),
+                        "predicted_noop_risk_prob": float(item_pred_noop_risk),
+                        "traditional_noop_target": bool(np.sum(sample.changed_mask) <= 0.0),
                         "predicted_delta_e": float(item_pred_reward / reward_scale),
                         "predicted_tau": float(item_pred_tau),
                         "predicted_expected_tau": float(item_pred_tau),
@@ -340,6 +375,8 @@ def main() -> None:
 
     pred_reward_sum_np = np.asarray(pred_reward_sum, dtype=np.float64)
     true_reward_sum_np = np.asarray(true_reward_sum, dtype=np.float64)
+    pred_noop_risk_np = np.asarray(pred_noop_risk, dtype=np.float64)
+    true_noop_risk_np = np.asarray(true_noop_risk, dtype=np.float64)
     pred_delta_e_np = pred_reward_sum_np / reward_scale
     true_delta_e_np = true_reward_sum_np / reward_scale
     pred_tau_np = np.asarray(pred_tau, dtype=np.float64)
@@ -407,9 +444,10 @@ def main() -> None:
         "segment_k": segment_k,
         "segment_ks": segment_ks,
         "reward_prediction_source": reward_prediction_source,
+        "reward_edit_context_source": reward_edit_context_source,
         "cache_signature": cache_signature,
         "dataset_stats": dataset_stats.get(args.split, {}),
-        "teacher_source": "traditional_kmc_segment_cache",
+        "teacher_source": f"{cache_signature.get('natural_teacher_backend', 'kmc')}_segment_cache",
         "time_heads": {
             "expected_tau_head": True,
             "realized_tau_head_loaded": bool(getattr(model, "realized_tau_head_loaded", True)),
@@ -419,6 +457,20 @@ def main() -> None:
         },
         "reward_sum": _compute_metrics(pred_reward_sum_np, true_reward_sum_np),
         "reward_diagnostics": mod._compute_reward_diagnostics(pred_reward_sum_np, true_reward_sum_np),
+        "noop_risk": {
+            "target_frac": float(np.mean(true_noop_risk_np)) if true_noop_risk_np.size else 0.0,
+            "pred_mean": float(np.mean(pred_noop_risk_np)) if pred_noop_risk_np.size else 0.0,
+            "noop_pred_mean": (
+                float(np.mean(pred_noop_risk_np[true_noop_risk_np > 0.5]))
+                if np.any(true_noop_risk_np > 0.5)
+                else 0.0
+            ),
+            "nonnoop_pred_mean": (
+                float(np.mean(pred_noop_risk_np[true_noop_risk_np <= 0.5]))
+                if np.any(true_noop_risk_np <= 0.5)
+                else 0.0
+            ),
+        },
         "delta_e": _compute_metrics(pred_delta_e_np, true_delta_e_np),
         "tau_expected": {
             **_compute_metrics(pred_tau_np, true_tau_exp_np),

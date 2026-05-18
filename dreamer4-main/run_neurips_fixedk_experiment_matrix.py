@@ -86,7 +86,7 @@ def _base_matrix(args: argparse.Namespace) -> list[RunSpec]:
                 train_segments=train_segments,
                 val_segments=val_segments,
                 long_segments=args.long_segments_full,
-                notes="Full fixed-k AtomWorld-Twins run.",
+                notes="Full fixed-k AtomWorld-Mirror run.",
             )
         )
 

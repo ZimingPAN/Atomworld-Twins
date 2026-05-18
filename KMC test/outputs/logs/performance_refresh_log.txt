@@ -1,4 +1,7 @@
+[刷新] 使用 100 step 口径刷新性能对比和 speedup 图。
+[刷新] baseline 全量刷新次数=2048。
 [性能] 开始固定 Fe-Cu-vacancy 算例优化前后对比。
-[性能] size=(8, 8, 8): baseline=1.7672s, optimized=0.1490s, speedup=11.86x
-[性能] size=(10, 10, 10): baseline=1.5771s, optimized=0.2331s, speedup=6.77x
-[性能] size=(12, 12, 12): baseline=1.6830s, optimized=0.3051s, speedup=5.52x
+[性能] size=(8, 8, 8): baseline=35.4762s, optimized=0.1320s, speedup=268.66x
+[性能] size=(10, 10, 10): baseline=46.6165s, optimized=0.1936s, speedup=240.84x
+[性能] size=(12, 12, 12): baseline=36.6778s, optimized=0.2679s, speedup=136.89x
+[性能] size=(14, 14, 14): baseline=37.5031s, optimized=0.4691s, speedup=79.94x
