@@ -10,26 +10,26 @@
 
 - baseline 模式采用 2048 次全量速率刷新，optimized 模式采用增量速率更新。
 
-- 8x8x8 baseline_full_recompute: runtime=42.669550s, steps/s=2.812, speedup_vs_baseline=1.000
-- 8x8x8 optimized_incremental_rate_update: runtime=0.152471s, steps/s=787.036, speedup_vs_baseline=279.854
-- 10x10x10 baseline_full_recompute: runtime=42.756140s, steps/s=2.807, speedup_vs_baseline=1.000
-- 10x10x10 optimized_incremental_rate_update: runtime=0.231333s, steps/s=518.734, speedup_vs_baseline=184.825
-- 12x12x12 baseline_full_recompute: runtime=53.884677s, steps/s=2.227, speedup_vs_baseline=1.000
-- 12x12x12 optimized_incremental_rate_update: runtime=0.310359s, steps/s=386.649, speedup_vs_baseline=173.620
-- 14x14x14 baseline_full_recompute: runtime=52.347620s, steps/s=2.292, speedup_vs_baseline=1.000
-- 14x14x14 optimized_incremental_rate_update: runtime=0.624058s, steps/s=192.290, speedup_vs_baseline=83.883
-- 16x16x16 baseline_full_recompute: runtime=54.410281s, steps/s=2.205, speedup_vs_baseline=1.000
-- 16x16x16 optimized_incremental_rate_update: runtime=0.936572s, steps/s=128.127, speedup_vs_baseline=58.095
-- 18x18x18 baseline_full_recompute: runtime=53.313591s, steps/s=2.251, speedup_vs_baseline=1.000
-- 18x18x18 optimized_incremental_rate_update: runtime=1.203496s, steps/s=99.709, speedup_vs_baseline=44.299
-- 20x20x20 baseline_full_recompute: runtime=60.066228s, steps/s=1.998, speedup_vs_baseline=1.000
-- 20x20x20 optimized_incremental_rate_update: runtime=1.769262s, steps/s=67.825, speedup_vs_baseline=33.950
-- 22x22x22 baseline_full_recompute: runtime=62.865116s, steps/s=1.909, speedup_vs_baseline=1.000
-- 22x22x22 optimized_incremental_rate_update: runtime=2.634929s, steps/s=45.542, speedup_vs_baseline=23.858
-- 24x24x24 baseline_full_recompute: runtime=68.801364s, steps/s=1.744, speedup_vs_baseline=1.000
-- 24x24x24 optimized_incremental_rate_update: runtime=3.340558s, steps/s=35.922, speedup_vs_baseline=20.596
-- 26x26x26 baseline_full_recompute: runtime=115.749780s, steps/s=1.037, speedup_vs_baseline=1.000
-- 26x26x26 optimized_incremental_rate_update: runtime=4.680601s, steps/s=25.638, speedup_vs_baseline=24.730
+- 8x8x8 baseline_full_recompute: runtime=35.476192s, steps/s=2.819, speedup_vs_baseline=1.000
+- 8x8x8 optimized_incremental_rate_update: runtime=0.132050s, steps/s=757.290, speedup_vs_baseline=268.658
+- 10x10x10 baseline_full_recompute: runtime=46.616472s, steps/s=2.145, speedup_vs_baseline=1.000
+- 10x10x10 optimized_incremental_rate_update: runtime=0.193554s, steps/s=516.651, speedup_vs_baseline=240.845
+- 12x12x12 baseline_full_recompute: runtime=36.677812s, steps/s=2.726, speedup_vs_baseline=1.000
+- 12x12x12 optimized_incremental_rate_update: runtime=0.267931s, steps/s=373.230, speedup_vs_baseline=136.893
+- 14x14x14 baseline_full_recompute: runtime=37.503147s, steps/s=2.666, speedup_vs_baseline=1.000
+- 14x14x14 optimized_incremental_rate_update: runtime=0.469133s, steps/s=213.159, speedup_vs_baseline=79.941
+- 16x16x16 baseline_full_recompute: runtime=41.330529s, steps/s=2.420, speedup_vs_baseline=1.000
+- 16x16x16 optimized_incremental_rate_update: runtime=0.852600s, steps/s=117.288, speedup_vs_baseline=48.476
+- 18x18x18 baseline_full_recompute: runtime=41.901815s, steps/s=2.387, speedup_vs_baseline=1.000
+- 18x18x18 optimized_incremental_rate_update: runtime=0.978949s, steps/s=102.150, speedup_vs_baseline=42.803
+- 20x20x20 baseline_full_recompute: runtime=43.168332s, steps/s=2.317, speedup_vs_baseline=1.000
+- 20x20x20 optimized_incremental_rate_update: runtime=1.448147s, steps/s=69.054, speedup_vs_baseline=29.809
+- 22x22x22 baseline_full_recompute: runtime=46.376671s, steps/s=2.156, speedup_vs_baseline=1.000
+- 22x22x22 optimized_incremental_rate_update: runtime=2.135285s, steps/s=46.832, speedup_vs_baseline=21.719
+- 24x24x24 baseline_full_recompute: runtime=49.493243s, steps/s=2.020, speedup_vs_baseline=1.000
+- 24x24x24 optimized_incremental_rate_update: runtime=2.786578s, steps/s=35.886, speedup_vs_baseline=17.761
+- 26x26x26 baseline_full_recompute: runtime=64.008389s, steps/s=1.562, speedup_vs_baseline=1.000
+- 26x26x26 optimized_incremental_rate_update: runtime=4.032368s, steps/s=24.799, speedup_vs_baseline=15.874
 
 ## 主要耗时模块
 

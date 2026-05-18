@@ -266,7 +266,7 @@ Fe-Cu-vacancy 合金体系测试 | 结果整理版 | {RUN_DATE}
 
 ## 8. 图形结果
 
-- 图 1：`outputs/figures/material_evolution_curves.png`，展示材料能量变化与 Cu 团簇演化曲线。
+- 图 1：`outputs/figures/material_evolution_curves.png`，展示温度下能量变化、Cu density 下团簇演化、vacancy density 下物理时间演化。
 - 图 2：`outputs/figures/cu_cluster_structure.png`，展示 Cu 团簇组织结构图。
 - 图 3：`outputs/figures/runtime_comparison.png`，展示优化前后运行时间对比。
 
@@ -456,7 +456,7 @@ def build_latex(summary: dict[str, object]) -> None:
                 "L{0.30\\linewidth}Y",
             ),
             "\\clearpage\n\\section*{8. 图形结果}",
-            tex_figure("../figures/material_evolution_curves.png", "材料能量变化与 Cu 团簇演化曲线", "0.94\\linewidth"),
+            tex_figure("../figures/material_evolution_curves.png", "温度、Cu density 与 vacancy density 条件下的材料演化曲线", "0.94\\linewidth"),
             tex_figure("../figures/cu_cluster_structure.png", "Cu 团簇组织结构图", "0.74\\linewidth"),
             tex_figure("../figures/runtime_comparison.png", "优化前后运行时间对比", "0.80\\linewidth"),
             "\\section*{9. 材料设计建议}",

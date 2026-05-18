@@ -5,3 +5,9 @@
 [性能] size=(10, 10, 10): baseline=46.6165s, optimized=0.1936s, speedup=240.84x
 [性能] size=(12, 12, 12): baseline=36.6778s, optimized=0.2679s, speedup=136.89x
 [性能] size=(14, 14, 14): baseline=37.5031s, optimized=0.4691s, speedup=79.94x
+[性能] size=(16, 16, 16): baseline=41.3305s, optimized=0.8526s, speedup=48.48x
+[性能] size=(18, 18, 18): baseline=41.9018s, optimized=0.9789s, speedup=42.80x
+[性能] size=(20, 20, 20): baseline=43.1683s, optimized=1.4481s, speedup=29.81x
+[性能] size=(22, 22, 22): baseline=46.3767s, optimized=2.1353s, speedup=21.72x
+[性能] size=(24, 24, 24): baseline=49.4932s, optimized=2.7866s, speedup=17.76x
+[性能] size=(26, 26, 26): baseline=64.0084s, optimized=4.0324s, speedup=15.87x

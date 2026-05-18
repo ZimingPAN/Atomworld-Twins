@@ -16,8 +16,8 @@ Fe-Cu-vacancy 合金体系测试 | 结果整理版 | 2026-05-18
 | 每组 KMC 步数 | 100 |
 | 逐步 KMC 记录 | 36000 |
 | 并行扩展性节点 | 1 到 1024 |
-| 十种 lattice size speedup | 279.854x, 184.825x, 173.620x, 83.883x, 58.095x, 44.299x, 33.950x, 23.858x, 20.596x, 24.730x |
-| 核心数据输出 | `outputs/datasets/multiscale_dataset.csv`; `outputs/tables/energy_results.csv`; `outputs/tables/lattice_size_scan.csv`; `outputs/tables/parallel_training_display.csv` |
+| 十种 lattice size speedup | 268.658x, 240.845x, 136.893x, 79.941x, 48.476x, 42.803x, 29.809x, 21.719x, 17.761x, 15.874x |
+| 核心数据输出 | `outputs/datasets/multiscale_dataset.csv`; `outputs/tables/multiscale_dataset.csv`; `outputs/tables/energy_results.csv`; `outputs/tables/lattice_size_scan.csv`; `outputs/tables/parallel_training_display.csv` |
 
 ## 1. 测试依据与目标
 
@@ -34,7 +34,7 @@ Fe-Cu-vacancy 合金体系测试 | 结果整理版 | 2026-05-18
 | --- | --- | --- |
 | Fe 基体 | 建立能量与结构基准 | `outputs/cases/typical_cases.json` |
 | Fe-Cu 溶质体系 | 检查 Cu 溶质构型与能量接口 | `outputs/tables/energy_results.csv` |
-| Fe-vacancy 缺陷体系 | 检查 vacancy-hop KMC 演化 | `outputs/datasets/multiscale_dataset.csv` |
+| Fe-vacancy 缺陷体系 | 检查 vacancy-hop KMC 演化 | `outputs/datasets/multiscale_dataset.csv`; `outputs/tables/multiscale_dataset.csv` |
 | Fe-Cu-vacancy 复合体系 | 连接能量、扩散率、性能和跨尺度数据 | `outputs/tables/energy_results.csv`; `outputs/tables/performance_records.csv` |
 | Fe-Cu 团簇演化体系 | 展示 Cu 团簇组织结构变化 | `outputs/figures/cu_cluster_structure.png` |
 
@@ -53,18 +53,64 @@ Fe-Cu-vacancy 合金体系测试 | 结果整理版 | 2026-05-18
 | DeepKS 调用路径 | `DeepKSCalculator -> get_potential_energy` |
 | 输出根目录 | `outputs/` |
 
-## 4. 分阶段测试完成情况
+## 4. 主要输出结果
+
+本测试最终形成以下结果：
+
+1. Fe-Cu-vacancy 典型测试算例；
+2. 能量计算结果表；
+3. 软件适配和性能测试记录；
+4. 跨尺度数据集；
+5. 材料演化曲线；
+6. Cu 团簇组织结构图；
+7. 计算效率对比表；
+8. 材料设计优化建议；
+9. 项目验收报告。
+
+| 序号 | 主要输出结果 | 对应文件 |
+| --- | --- | --- |
+| 1 | Fe-Cu-vacancy 典型测试算例 | `outputs/cases/typical_cases.json` |
+| 2 | 能量计算结果表 | `outputs/tables/energy_results.csv` |
+| 3 | 软件适配和性能测试记录 | `outputs/reports/software_adaptation_and_performance.md`; `outputs/tables/performance_records.csv`; `outputs/tables/module_timing_breakdown.csv` |
+| 4 | 跨尺度数据集 | `outputs/datasets/multiscale_dataset.csv`; `outputs/tables/multiscale_dataset.csv` |
+| 5 | 材料演化曲线 | `outputs/figures/material_evolution_curves.png` |
+| 6 | Cu 团簇组织结构图 | `outputs/figures/cu_cluster_structure.png` |
+| 7 | 计算效率对比表 | `outputs/tables/efficiency_comparison.csv`; `outputs/figures/runtime_comparison.png` |
+| 8 | 材料设计优化建议 | `outputs/reports/material_design_recommendations.md` |
+| 9 | 项目验收报告 | `outputs/reports/acceptance_report.pdf`; `outputs/reports/acceptance_report.tex`; `outputs/reports/acceptance_report.md` |
+
+## 5. 验收展示内容
+
+验收时重点展示：
+
+1. 软件适配结果：说明 Fe-Cu-vacancy 算例可以正常运行；
+2. 性能优化结果：展示优化前后运行时间对比；
+3. 跨尺度数据结果：展示不同温度、成分条件下的数据生成；
+4. 材料演化结果：展示能量变化曲线和 Cu 团簇结构；
+5. 设计优化结果：给出材料成分和组织调控建议；
+6. 验收报告：汇总各阶段任务完成情况。
+
+| 序号 | 验收展示内容 | 展示证据 |
+| --- | --- | --- |
+| 1 | 软件适配结果：说明 Fe-Cu-vacancy 算例可以正常运行 | `outputs/logs/model_call_log.txt`; `outputs/tables/stage_completion_matrix.csv` |
+| 2 | 性能优化结果：展示优化前后运行时间对比 | `outputs/tables/performance_records.csv`; `outputs/figures/runtime_comparison.png` |
+| 3 | 跨尺度数据结果：展示不同温度、成分条件下的数据生成 | `outputs/datasets/multiscale_dataset.csv`; `outputs/tables/energy_results.csv` |
+| 4 | 材料演化结果：展示能量变化曲线和 Cu 团簇结构 | `outputs/figures/material_evolution_curves.png`; `outputs/figures/cu_cluster_structure.png` |
+| 5 | 设计优化结果：给出材料成分和组织调控建议 | `outputs/reports/material_design_recommendations.md`; `outputs/tables/composition_structure_trends.csv` |
+| 6 | 验收报告：汇总各阶段任务完成情况 | `outputs/reports/acceptance_report.pdf`; `outputs/reports/output_audit_against_test_plan.md` |
+
+## 6. 分阶段测试完成情况
 
 | 阶段 | 测试内容 | 成果形式 | 状态 |
 | --- | --- | --- | --- |
 | 1 | Fe-Cu-vacancy 基础算例适配与能量计算流程 | outputs/cases/typical_cases.json; outputs/tables/energy_results.csv | 完成 |
 | 2 | 固定 Fe-Cu-vacancy 算例性能测试与 DeepH/DeepKS 调用记录 | outputs/tables/performance_records.csv; outputs/tables/module_timing_breakdown.csv; outputs/tables/model_call_records.csv | 完成 |
-| 3 | 不同温度、成分、缺陷、lattice size 条件下跨尺度演化计算 | outputs/datasets/multiscale_dataset.csv; outputs/tables/lattice_size_scan.csv; outputs/figures/material_evolution_curves.png; outputs/tables/parallel_training_display.csv | 完成 |
+| 3 | 不同温度、成分、缺陷、lattice size 条件下跨尺度演化计算 | outputs/datasets/multiscale_dataset.csv; outputs/tables/multiscale_dataset.csv; outputs/tables/lattice_size_scan.csv; outputs/figures/material_evolution_curves.png; outputs/tables/parallel_training_display.csv | 完成 |
 | 4 | 优化前后运行时间和并行效率统计 | outputs/tables/efficiency_comparison.csv; outputs/figures/runtime_comparison.png | 完成 |
 | 5 | 按成分、温度和缺陷条件给出设计优化建议 | outputs/tables/composition_structure_trends.csv; outputs/reports/material_design_recommendations.md | 完成 |
 | 6 | 汇总全部测试结果形成验收报告 | outputs/reports/acceptance_report.md; outputs/reports/acceptance_report.tex; outputs/reports/acceptance_report.pdf; outputs/manifest.json | 完成 |
 
-## 5. 关键结果
+## 7. 关键结果
 
 | 结果项 | 数值或结论 |
 | --- | --- |
@@ -75,24 +121,24 @@ Fe-Cu-vacancy 合金体系测试 | 结果整理版 | 2026-05-18
 | 能量结果行数 | 360 |
 | 最终 pair energy 范围 | -149825.616261 到 -4364.526262 eV |
 | Cu 最大团簇范围 | 1 到 167 |
-| 十种 lattice size speedup | 279.854x, 184.825x, 173.620x, 83.883x, 58.095x, 44.299x, 33.950x, 23.858x, 20.596x, 24.730x |
+| 十种 lattice size speedup | 268.658x, 240.845x, 136.893x, 79.941x, 48.476x, 42.803x, 29.809x, 21.719x, 17.761x, 15.874x |
 | DeepH / DeepKS 并行扩展性记录 | 覆盖 1 到 1024 节点 |
-| 输出清单记录文件数 | 28（不含 manifest 自身） |
+| 输出清单记录文件数 | 30（不含 manifest 自身） |
 
-## 6. 图形结果
+## 8. 图形结果
 
-- 图 1：`outputs/figures/material_evolution_curves.png`，展示材料能量变化与 Cu 团簇演化曲线。
+- 图 1：`outputs/figures/material_evolution_curves.png`，展示温度下能量变化、Cu density 下团簇演化、vacancy density 下物理时间演化。
 - 图 2：`outputs/figures/cu_cluster_structure.png`，展示 Cu 团簇组织结构图。
 - 图 3：`outputs/figures/runtime_comparison.png`，展示优化前后运行时间对比。
 
-## 7. 材料设计建议
+## 9. 材料设计建议
 
 - 单位位点能量最低组合为 `ms_315`：T=1000 K，Cu=0.0025，V=0.0005。
 - Cu 团簇最大组合为 `ms_034`：T=250 K，Cu=0.05，V=0.005，max_cluster=167。
 - 若目标是降低能量并保持均匀固溶，建议优先采用 Fe-rich、低到中等 Cu 配方，并控制 vacancy density。
 - 若目标是展示 Cu-rich clustering 或析出趋势，建议提高 Cu density，并在中高温条件下延长 KMC 演化步数。
 
-## 8. 输出文件索引与结论
+## 10. 输出文件索引与结论
 
 本测试已形成 Fe-Cu-vacancy 体系从典型算例、能量计算、跨尺度演化、性能对比、并行扩展性记录到材料设计建议的完整 KMC 测试链路，输出覆盖方案要求的主要结果，可用于验收汇报和后续复核。
 
@@ -102,7 +148,7 @@ Fe-Cu-vacancy 合金体系测试 | 结果整理版 | 2026-05-18
 | 能量计算结果表 | `outputs/tables/energy_results.csv` |
 | lattice size 扫描结果表 | `outputs/tables/lattice_size_scan.csv` |
 | 软件适配和性能测试记录 | `outputs/reports/software_adaptation_and_performance.md` |
-| 跨尺度数据集 | `outputs/datasets/multiscale_dataset.csv` |
+| 跨尺度数据集 | `outputs/datasets/multiscale_dataset.csv`; `outputs/tables/multiscale_dataset.csv` |
 | 材料演化曲线 | `outputs/figures/material_evolution_curves.png` |
 | Cu 团簇组织结构图 | `outputs/figures/cu_cluster_structure.png` |
 | 计算效率对比表 | `outputs/tables/efficiency_comparison.csv` |

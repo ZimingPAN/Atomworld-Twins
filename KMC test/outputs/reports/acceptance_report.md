@@ -27,18 +27,55 @@
 | 每组 KMC 步数 | 100 |
 | 逐步 KMC 记录 | 36000 |
 | 并行扩展性节点 | 1 到 1024 |
-| 十种 lattice size speedup | 279.854x, 184.825x, 173.620x, 83.883x, 58.095x, 44.299x, 33.950x, 23.858x, 20.596x, 24.730x |
+| 十种 lattice size speedup | 268.658x, 240.845x, 136.893x, 79.941x, 48.476x, 42.803x, 29.809x, 21.719x, 17.761x, 15.874x |
 
-## 4. 能量与跨尺度数据
+## 4. 主要输出结果
+
+本测试最终形成以下结果：
+
+1. Fe-Cu-vacancy 典型测试算例；
+2. 能量计算结果表；
+3. 软件适配和性能测试记录；
+4. 跨尺度数据集；
+5. 材料演化曲线；
+6. Cu 团簇组织结构图；
+7. 计算效率对比表；
+8. 材料设计优化建议；
+9. 项目验收报告。
+
+| 序号 | 主要输出结果 | 对应文件 |
+| --- | --- | --- |
+| 1 | Fe-Cu-vacancy 典型测试算例 | `outputs/cases/typical_cases.json` |
+| 2 | 能量计算结果表 | `outputs/tables/energy_results.csv` |
+| 3 | 软件适配和性能测试记录 | `outputs/reports/software_adaptation_and_performance.md`; `outputs/tables/performance_records.csv`; `outputs/tables/module_timing_breakdown.csv` |
+| 4 | 跨尺度数据集 | `outputs/datasets/multiscale_dataset.csv`; `outputs/tables/multiscale_dataset.csv` |
+| 5 | 材料演化曲线 | `outputs/figures/material_evolution_curves.png` |
+| 6 | Cu 团簇组织结构图 | `outputs/figures/cu_cluster_structure.png` |
+| 7 | 计算效率对比表 | `outputs/tables/efficiency_comparison.csv`; `outputs/figures/runtime_comparison.png` |
+| 8 | 材料设计优化建议 | `outputs/reports/material_design_recommendations.md` |
+| 9 | 项目验收报告 | `outputs/reports/acceptance_report.md`; `outputs/reports/acceptance_report.tex`; `outputs/reports/acceptance_report.pdf` |
+
+## 5. 验收展示内容
+
+验收时重点展示：
+
+1. 软件适配结果：说明 Fe-Cu-vacancy 算例可以正常运行；
+2. 性能优化结果：展示优化前后运行时间对比；
+3. 跨尺度数据结果：展示不同温度、成分条件下的数据生成；
+4. 材料演化结果：展示能量变化曲线和 Cu 团簇结构；
+5. 设计优化结果：给出材料成分和组织调控建议；
+6. 验收报告：汇总各阶段任务完成情况。
+
+## 6. 能量与跨尺度数据
 
 - 能量计算结果表：`outputs/tables/energy_results.csv`
 - lattice size 扫描结果表：`outputs/tables/lattice_size_scan.csv`
-- 跨尺度逐步数据集：`outputs/datasets/multiscale_dataset.csv`
+- 跨尺度逐步数据集：`outputs/datasets/multiscale_dataset.csv`；表格副本：`outputs/tables/multiscale_dataset.csv`
 - 快照数据：`outputs/datasets/kmc_snapshots.csv`
-- 材料演化曲线：`outputs/figures/material_evolution_curves.png`
+- 材料演化曲线：`outputs/figures/material_evolution_curves.png`（含温度、Cu density 和 vacancy density 三个展示面板）
 - Cu 团簇结构图：`outputs/figures/cu_cluster_structure.png`
 
-## 5. 性能与并行展示
+## 7. 性能与并行展示
 
 - 优化前后性能记录：`outputs/tables/performance_records.csv`
 - 主要耗时模块拆分：`outputs/tables/module_timing_breakdown.csv`
@@ -50,30 +87,30 @@
 - 设备配置记录：`outputs/tables/device_config.csv`
 - 逐句核对与输出合理性检查：`outputs/reports/output_audit_against_test_plan.md`
 - 本次扩展性记录最大节点数：1024
-- KMC 增量速率更新相对全量重算的最大测得 speedup：279.854x
+- KMC 增量速率更新相对全量重算的最大测得 speedup：268.658x
 
-## 6. 材料设计建议
+## 8. 材料设计建议
 
 材料设计优化建议见 `outputs/reports/material_design_recommendations.md`。
 
-## 7. 主要输出结果对照
+## 9. 主要输出结果对照
 
 | 文档要求 | 已生成文件 |
 | --- | --- |
 | Fe-Cu-vacancy 典型测试算例 | `outputs/cases/typical_cases.json` |
 | 能量计算结果表 | `outputs/tables/energy_results.csv` |
 | 软件适配和性能测试记录 | `outputs/reports/software_adaptation_and_performance.md`; `outputs/tables/module_timing_breakdown.csv` |
-| 跨尺度数据集 | `outputs/datasets/multiscale_dataset.csv` |
+| 跨尺度数据集 | `outputs/datasets/multiscale_dataset.csv`; `outputs/tables/multiscale_dataset.csv` |
 | 材料演化曲线 | `outputs/figures/material_evolution_curves.png` |
 | Cu 团簇组织结构图 | `outputs/figures/cu_cluster_structure.png` |
 | 计算效率对比表 | `outputs/tables/efficiency_comparison.csv` |
 | 材料设计优化建议 | `outputs/reports/material_design_recommendations.md` |
 | 项目验收报告 | `outputs/reports/acceptance_report.md`; `outputs/reports/acceptance_report.tex`; `outputs/reports/acceptance_report.pdf` |
 
-## 8. 结论
+## 10. 结论
 
 测试脚本已完成 KMC 横向验收链路：Fe-Cu-vacancy 算例可运行，能量表、跨尺度演化数据、性能对比、千节点并行扩展性记录、组织结构图和设计建议均已生成。DeepH / DeepKS 当前按要求保留能量接口调用入口，可直接绑定对应库的能量计算函数。
 
-## 9. 输出清单
+## 11. 输出清单
 
 输出清单见 `outputs/manifest.json`，该清单记录除自身外的生成文件。
