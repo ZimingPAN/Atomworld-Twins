@@ -54,23 +54,23 @@
     },
     {
       "path": "outputs/reports/acceptance_report.pdf",
-      "bytes": 100491
+      "bytes": 99667
     },
     {
       "path": "outputs/reports/acceptance_report.tex",
-      "bytes": 10955
+      "bytes": 10984
     },
     {
       "path": "outputs/reports/kmc_test_document.md",
-      "bytes": 10706
+      "bytes": 6248
     },
     {
       "path": "outputs/reports/kmc_test_document.pdf",
-      "bytes": 844008
+      "bytes": 830770
     },
     {
       "path": "outputs/reports/kmc_test_document.tex",
-      "bytes": 15298
+      "bytes": 9335
     },
     {
       "path": "outputs/reports/material_design_recommendations.md",

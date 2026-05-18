@@ -5,7 +5,7 @@ import csv
 import json
 from pathlib import Path
 
-from kmc_latex_tools import compile_pdf, tex_document, tex_enumerate, tex_figure, tex_figure_note, tex_itemize, tex_metric_strip, tex_table
+from kmc_latex_tools import compile_pdf, latex_escape, tex_document, tex_enumerate, tex_figure, tex_figure_note, tex_itemize, tex_metric_strip, tex_table
 
 
 ROOT = Path(__file__).resolve().parent
@@ -28,6 +28,18 @@ def read_csv(name: str) -> list[dict[str, str]]:
 
 def status_label(value: str) -> str:
     return STATUS_LABELS.get(str(value), str(value))
+
+
+def stage_outcome_text(stage: str) -> str:
+    outcomes = {
+        "1": "测试算例、能量结果",
+        "2": "性能对比表、模型调用记录",
+        "3": "跨尺度数据集、演化曲线",
+        "4": "效率对比表、运行时间曲线",
+        "5": "成分-组织趋势表、材料设计建议",
+        "6": "验收报告、测试数据、结果图表",
+    }
+    return outcomes.get(str(stage), "")
 
 
 def fmt_temp(value: str) -> str:
@@ -139,65 +151,38 @@ def build_markdown(summary: dict[str, object]) -> None:
     energy_min, energy_max = summary["energy_range"]
     cluster_min, cluster_max = summary["cluster_range"]
     stage_lines = "\n".join(
-        f"| {r['stage']} | {r['test_content']} | {r['generated_artifacts']} | {status_label(r['status'])} |"
+        f"| 阶段 {r['stage']} | {r['test_content']} | {r['acceptance_indicator']} | {stage_outcome_text(r['stage'])} |"
         for r in summary["stage_rows"]
     )
-    text = f"""# 强关联材料多尺度计算 KMC 测试文档
+    text = f"""# 强关联材料多尺度计算 KMC 测试报告
 
-Fe-Cu-vacancy 合金体系测试 | 结果整理版 | {RUN_DATE}
+Fe-Cu-vacancy 合金体系测试 | {RUN_DATE}
 
-## 0. 测试规模总览
+## 一、测试目标
 
-| 项目 | 本次结果 |
-| --- | --- |
-| 温度扫描 | {temp_values} |
-| Cu density 扫描 | {cu_values} |
-| vacancy density 扫描 | {v_values} |
-| lattice size 扫描 | {lattice_values} |
-| 温度/成分/缺陷组合数量 | {len(summary['main_rows'])} |
-| lattice size 扫描数量 | {len(summary['lattice_rows'])} |
-| 总 KMC 算例数量 | {summary['case_count']} |
-| 每组 KMC 步数 | {steps_per_case} |
-| 逐步 KMC 记录 | {summary['step_count']} |
-| 并行扩展性节点 | 1 到 {summary['max_nodes']} |
-| 十种 lattice size speedup | {speedups} |
-| 核心数据输出 | `outputs/datasets/multiscale_dataset.csv`; `outputs/tables/multiscale_dataset.csv`; `outputs/tables/energy_results.csv`; `outputs/tables/lattice_size_scan.csv`; `outputs/tables/parallel_training_display.csv` |
+围绕强关联材料多尺度计算测试任务，选取 Fe-Cu-vacancy 合金体系作为测试样例，验证 KMC 流程在材料能量计算、跨尺度数据生成、并行计算展示和材料设计建议方面的能力。
 
-## 1. 测试依据与目标
+本次测试覆盖温度 {temp_values}，Cu density {cu_values}，vacancy density {v_values}，lattice size {lattice_values}。共形成 {summary['case_count']} 个 KMC 算例，其中温度/成分/缺陷组合 {len(summary['main_rows'])} 个，lattice size 扫描 {len(summary['lattice_rows'])} 个，每组 {steps_per_case} 个 KMC step，逐步记录 {summary['step_count']} 条，并行扩展性记录覆盖 1 到 {summary['max_nodes']} 节点。
 
-本测试以 Fe-Cu-vacancy 合金体系为样例，围绕材料能量计算、跨尺度数据生成、并行扩展性记录、材料演化分析和材料设计建议形成完整测试闭环。
+## 二、测试体系
 
-- 验证 Fe-Cu-vacancy 典型算例可以完成 KMC 初始化、能量计算、扩散率计算和逐步演化。
-- 验证 DeepH / DeepKS 能量接口在初始化阶段输出接口能量，并保留库调用路径。
-- 验证不同温度、不同 Cu 含量、不同 vacancy 含量和不同 lattice size 条件下的跨尺度数据生成与组织结构分析。
-- 验证优化前后运行时间、主要耗时模块、并行扩展性记录和材料设计建议均有可追溯输出。
+测试体系采用 Fe-Cu-vacancy 合金体系，包括：
 
-## 2. 测试体系
+1. Fe 基体；
+2. Fe-Cu 溶质体系；
+3. Fe-vacancy 缺陷体系；
+4. Fe-Cu-vacancy 复合体系；
+5. Fe-Cu 团簇演化体系。
 
-| 体系 | 测试目的 | 输出证据 |
-| --- | --- | --- |
-| Fe 基体 | 建立能量与结构基准 | `outputs/cases/typical_cases.json` |
-| Fe-Cu 溶质体系 | 检查 Cu 溶质构型与能量接口 | `outputs/tables/energy_results.csv` |
-| Fe-vacancy 缺陷体系 | 检查 vacancy-hop KMC 演化 | `outputs/datasets/multiscale_dataset.csv`; `outputs/tables/multiscale_dataset.csv` |
-| Fe-Cu-vacancy 复合体系 | 连接能量、扩散率、性能和跨尺度数据 | `outputs/tables/energy_results.csv`; `outputs/tables/performance_records.csv` |
-| Fe-Cu 团簇演化体系 | 展示 Cu 团簇组织结构变化 | `outputs/figures/cu_cluster_structure.png` |
+设备统一通过 `--device` 入口传入，当前记录为 requested={device['requested_device']}，resolved={device['resolved_device']}，backend={device['backend']}，status={device['status']}。DeepH 调用路径为 `DeepHCalculator -> predict_hamiltonian -> total_energy`，DeepKS 调用路径为 `DeepKSCalculator -> get_potential_energy`。
 
-## 3. 测试配置与设备接口
+## 三、分阶段测试内容
 
-本次运行设备配置为 requested={device['requested_device']}，resolved={device['resolved_device']}，backend={device['backend']}，status={device['status']}。脚本统一通过 `--device` 传入计算设备，并支持 `cpu`、`cuda:localrank` 和 `sdaa:localrank`。
+| 阶段 | 测试内容 | 对应考核指标 | 成果形式 |
+| --- | --- | --- | --- |
+{stage_lines}
 
-本次跨尺度扫描网格包含温度 {temp_values}，Cu density {cu_values}，vacancy density {v_values}，lattice size {lattice_values}。
-
-| 配置项 | 取值 |
-| --- | --- |
-| 主执行脚本 | `run_kmc_acceptance.py` |
-| 设备入口 | `--device` |
-| 严格设备模式 | `--strict-device` |
-| DeepH 调用路径 | `DeepHCalculator -> predict_hamiltonian -> total_energy` |
-| DeepKS 调用路径 | `DeepKSCalculator -> get_potential_energy` |
-| 输出根目录 | `outputs/` |
-
-## 4. 主要输出结果
+## 四、主要输出结果
 
 本测试最终形成以下结果：
 
@@ -223,7 +208,7 @@ Fe-Cu-vacancy 合金体系测试 | 结果整理版 | {RUN_DATE}
 | 8 | 材料设计优化建议 | `outputs/reports/material_design_recommendations.md` |
 | 9 | 项目验收报告 | `outputs/reports/acceptance_report.pdf`; `outputs/reports/acceptance_report.tex`; `outputs/reports/acceptance_report.md` |
 
-## 5. 验收展示内容
+## 五、验收展示内容
 
 验收时重点展示：
 
@@ -234,37 +219,7 @@ Fe-Cu-vacancy 合金体系测试 | 结果整理版 | {RUN_DATE}
 5. 设计优化结果：给出材料成分和组织调控建议；
 6. 验收报告：汇总各阶段任务完成情况。
 
-| 序号 | 验收展示内容 | 展示证据 |
-| --- | --- | --- |
-| 1 | 软件适配结果：说明 Fe-Cu-vacancy 算例可以正常运行 | `outputs/logs/model_call_log.txt`; `outputs/tables/stage_completion_matrix.csv` |
-| 2 | 性能优化结果：展示优化前后运行时间对比 | `outputs/tables/performance_records.csv`; `outputs/figures/runtime_comparison.png` |
-| 3 | 跨尺度数据结果：展示不同温度、成分条件下的数据生成 | `outputs/datasets/multiscale_dataset.csv`; `outputs/tables/energy_results.csv` |
-| 4 | 材料演化结果：展示能量变化曲线和 Cu 团簇结构 | `outputs/figures/material_evolution_curves.png`; `outputs/figures/cu_cluster_structure.png` |
-| 5 | 设计优化结果：给出材料成分和组织调控建议 | `outputs/reports/material_design_recommendations.md`; `outputs/tables/composition_structure_trends.csv` |
-| 6 | 验收报告：汇总各阶段任务完成情况 | `outputs/reports/acceptance_report.pdf`; `outputs/reports/output_audit_against_test_plan.md` |
-
-## 6. 分阶段测试完成情况
-
-| 阶段 | 测试内容 | 成果形式 | 状态 |
-| --- | --- | --- | --- |
-{stage_lines}
-
-## 7. 关键结果
-
-| 结果项 | 数值或结论 |
-| --- | --- |
-| 温度/成分/缺陷组合数量 | {len(summary['main_rows'])} |
-| lattice size 扫描数量 | {len(summary['lattice_rows'])} |
-| 总 KMC 算例数量 | {summary['case_count']} |
-| 逐步 KMC 记录 | {summary['step_count']} |
-| 能量结果行数 | {len(summary['energy_rows'])} |
-| 最终 pair energy 范围 | {energy_min:.6f} 到 {energy_max:.6f} eV |
-| Cu 最大团簇范围 | {cluster_min} 到 {cluster_max} |
-| 十种 lattice size speedup | {speedups} |
-| DeepH / DeepKS 并行扩展性记录 | 覆盖 1 到 {summary['max_nodes']} 节点 |
-| 输出清单记录文件数 | {summary['manifest_count']}（不含 manifest 自身） |
-
-## 8. 图形结果
+主要图形结果如下：
 
 - 图 1：`outputs/figures/material_evolution_curves.png`，展示温度下能量变化、Cu density 下团簇演化、vacancy density 下物理时间演化。
   - 图示说明：左图展示不同温度条件下平均能量随 KMC step 的变化；中图展示不同 Cu density 条件下最大 Cu 团簇尺寸变化，并去除了最高 Cu density 曲线以突出低中 Cu 含量差异；右图展示不同 vacancy density 条件下物理时间推进差异。
@@ -273,27 +228,21 @@ Fe-Cu-vacancy 合金体系测试 | 结果整理版 | {RUN_DATE}
 - 图 3：`outputs/figures/runtime_comparison.png`，展示优化前后运行时间对比。
   - 图示说明：左图使用对数坐标比较全量速率刷新 baseline 与增量更新模式的运行时间，右图给出各 lattice size 下的 measured speedup，用于展示性能优化趋势。
 
-## 9. 材料设计建议
+## 六、简要结论
 
-- 单位位点能量最低组合为 `{best_energy['case_id']}`：T={fmt_temp(best_energy['temperature_K'])}，Cu={best_energy['cu_density']}，V={best_energy['v_density']}。
-- Cu 团簇最大组合为 `{best_cluster['case_id']}`：T={fmt_temp(best_cluster['temperature_K'])}，Cu={best_cluster['cu_density']}，V={best_cluster['v_density']}，max_cluster={best_cluster['final_cu_cluster_max']}。
+通过 Fe-Cu-vacancy 测试样例，本测试展示了 KMC 从材料能量计算、跨尺度数据生成、大规模并行计算展示到材料设计建议的完整流程。测试结果可支撑强关联材料体系的数值模拟、智能计算和优化设计任务验收。
 
-## 10. 输出文件索引与结论
+关键结果摘要如下：
 
-本测试已形成 Fe-Cu-vacancy 体系从典型算例、能量计算、跨尺度演化、性能对比、并行扩展性记录到材料设计建议的完整 KMC 测试链路，输出覆盖方案要求的主要结果，可用于验收汇报和后续复核。
-
-| 文档要求 | 对应输出 |
+| 项目 | 结果 |
 | --- | --- |
-| Fe-Cu-vacancy 典型测试算例 | `outputs/cases/typical_cases.json` |
-| 能量计算结果表 | `outputs/tables/energy_results.csv` |
-| lattice size 扫描结果表 | `outputs/tables/lattice_size_scan.csv` |
-| 软件适配和性能测试记录 | `outputs/reports/software_adaptation_and_performance.md` |
-| 跨尺度数据集 | `outputs/datasets/multiscale_dataset.csv`; `outputs/tables/multiscale_dataset.csv` |
-| 材料演化曲线 | `outputs/figures/material_evolution_curves.png` |
-| Cu 团簇组织结构图 | `outputs/figures/cu_cluster_structure.png` |
-| 计算效率对比表 | `outputs/tables/efficiency_comparison.csv` |
-| 材料设计优化建议 | `outputs/reports/material_design_recommendations.md` |
-| 项目验收报告 | `outputs/reports/acceptance_report.pdf`; `outputs/reports/acceptance_report.tex` |
+| 总 KMC 算例数量 | {summary['case_count']} |
+| 逐步 KMC 记录 | {summary['step_count']} |
+| 能量结果行数 | {len(summary['energy_rows'])} |
+| 最终 pair energy 范围 | {energy_min:.6f} 到 {energy_max:.6f} eV |
+| Cu 最大团簇范围 | {cluster_min} 到 {cluster_max} |
+| 十种 lattice size speedup | {speedups} |
+| DeepH / DeepKS 并行扩展性记录 | 覆盖 1 到 {summary['max_nodes']} 节点 |
 """
     REPORTS.mkdir(parents=True, exist_ok=True)
     MD_OUT.write_text(text, encoding="utf-8")
@@ -301,8 +250,6 @@ Fe-Cu-vacancy 合金体系测试 | 结果整理版 | {RUN_DATE}
 
 def build_latex(summary: dict[str, object]) -> None:
     device = summary["device"]
-    best_energy = summary["best_energy"]
-    best_cluster = summary["best_cluster"]
     speedups = ", ".join(f"{v:.3f}x" for v in summary["speedups"])
     temp_values = ", ".join(f"{v:g} K" for v in summary["temperature_values"])
     cu_values = ", ".join(f"{v:g}" for v in summary["cu_values"])
@@ -314,71 +261,37 @@ def build_latex(summary: dict[str, object]) -> None:
 
     body = "\n\n".join(
         [
-            tex_metric_strip(
+            "\\section*{一、测试目标}\n"
+            "围绕强关联材料多尺度计算测试任务，选取 Fe-Cu-vacancy 合金体系作为测试样例，验证 KMC 流程在材料能量计算、跨尺度数据生成、并行计算展示和材料设计建议方面的能力。\n\n"
+            f"本次测试覆盖温度 {temp_values}，Cu density {cu_values}，vacancy density {v_values}，lattice size {lattice_values}。"
+            f"共形成 {summary['case_count']} 个 KMC 算例，其中温度/成分/缺陷组合 {len(summary['main_rows'])} 个，lattice size 扫描 {len(summary['lattice_rows'])} 个，"
+            f"每组 {steps_per_case} 个 KMC step，逐步记录 {summary['step_count']} 条，并行扩展性记录覆盖 1 到 {summary['max_nodes']} 节点。",
+            "\\section*{二、测试体系}\n"
+            "测试体系采用 Fe-Cu-vacancy 合金体系，包括：\n"
+            + tex_enumerate(
                 [
-                    ("总 KMC 算例", summary["case_count"]),
-                    ("逐步记录", summary["step_count"]),
-                    ("lattice size 数", len(summary["lattice_rows"])),
-                    ("最大 speedup", f"{max(summary['speedups']):.3f}x"),
+                    "Fe 基体；",
+                    "Fe-Cu 溶质体系；",
+                    "Fe-vacancy 缺陷体系；",
+                    "Fe-Cu-vacancy 复合体系；",
+                    "Fe-Cu 团簇演化体系。",
                 ]
+            )
+            + "\n\n"
+            + latex_escape(
+                f"设备统一通过 --device 入口传入，当前记录为 requested={device['requested_device']}，resolved={device['resolved_device']}，backend={device['backend']}，status={device['status']}。"
+                "DeepH 调用路径为 DeepHCalculator -> predict_hamiltonian -> total_energy，DeepKS 调用路径为 DeepKSCalculator -> get_potential_energy。"
             ),
-            "\\section*{0. 测试规模总览}",
+            "\\section*{三、分阶段测试内容}",
             tex_table(
-                ["项目", "本次结果"],
+                ["阶段", "测试内容", "对应考核指标", "成果形式"],
                 [
-                    ["温度扫描", temp_values],
-                    ["Cu density 扫描", cu_values],
-                    ["vacancy density 扫描", v_values],
-                    ["lattice size 扫描", lattice_values],
-                    ["温度/成分/缺陷组合数量", len(summary["main_rows"])],
-                    ["lattice size 扫描数量", len(summary["lattice_rows"])],
-                    ["总 KMC 算例数量", summary["case_count"]],
-                    ["每组 KMC 步数", steps_per_case],
-                    ["逐步 KMC 记录", summary["step_count"]],
-                    ["并行扩展性节点", f"1 到 {summary['max_nodes']}"],
-                    ["十种 lattice size speedup", speedups],
+                    [f"阶段 {r['stage']}", r["test_content"], r["acceptance_indicator"], stage_outcome_text(r["stage"])]
+                    for r in summary["stage_rows"]
                 ],
-                "L{0.28\\linewidth}Y",
+                "L{0.11\\linewidth}L{0.36\\linewidth}L{0.27\\linewidth}Y",
             ),
-            "\\section*{1. 测试依据与目标}\n"
-            "本测试以 Fe-Cu-vacancy 合金体系为样例，围绕材料能量计算、跨尺度数据生成、并行扩展性记录、材料演化分析和材料设计建议形成完整测试闭环。\n"
-            + tex_itemize(
-                [
-                    "验证 Fe-Cu-vacancy 典型算例可以完成 KMC 初始化、能量计算、扩散率计算和逐步演化。",
-                    "验证 DeepH / DeepKS 能量接口在初始化阶段输出接口能量，并保留库调用路径。",
-                    "验证不同温度、不同 Cu 含量、不同 vacancy 含量和不同 lattice size 条件下的跨尺度数据生成与组织结构分析。",
-                    "验证优化前后运行时间、主要耗时模块、并行扩展性记录和材料设计建议均有可追溯输出。",
-                ]
-            ),
-            "\\section*{2. 测试体系}",
-            tex_table(
-                ["体系", "测试目的", "输出证据"],
-                [
-                    ["Fe 基体", "建立能量与结构基准", "outputs/cases/typical_cases.json"],
-                    ["Fe-Cu 溶质体系", "检查 Cu 溶质构型与能量接口", "outputs/tables/energy_results.csv"],
-                    ["Fe-vacancy 缺陷体系", "检查 vacancy-hop KMC 演化", "outputs/datasets/multiscale_dataset.csv; outputs/tables/multiscale_dataset.csv"],
-                    ["Fe-Cu-vacancy 复合体系", "连接能量、扩散率、性能和跨尺度数据", "outputs/tables/energy_results.csv; outputs/tables/performance_records.csv"],
-                    ["Fe-Cu 团簇演化体系", "展示 Cu 团簇组织结构变化", "outputs/figures/cu_cluster_structure.png"],
-                ],
-                "L{0.20\\linewidth}L{0.34\\linewidth}Y",
-            ),
-            "\\section*{3. 测试配置与设备接口}\n"
-            f"本次运行设备配置为 requested={device['requested_device']}，resolved={device['resolved_device']}，backend={device['backend']}，status={device['status']}。"
-            "脚本统一通过 --device 传入计算设备，并支持 cpu、cuda:localrank 和 sdaa:localrank。\n\n"
-            f"本次跨尺度扫描网格包含温度 {temp_values}，Cu density {cu_values}，vacancy density {v_values}，lattice size {lattice_values}。",
-            tex_table(
-                ["配置项", "取值"],
-                [
-                    ["主执行脚本", "run_kmc_acceptance.py"],
-                    ["设备入口", "--device"],
-                    ["严格设备模式", "--strict-device"],
-                    ["DeepH 调用路径", "DeepHCalculator -> predict_hamiltonian -> total_energy"],
-                    ["DeepKS 调用路径", "DeepKSCalculator -> get_potential_energy"],
-                    ["输出根目录", "outputs/"],
-                ],
-                "L{0.28\\linewidth}Y",
-            ),
-            "\\section*{4. 主要输出结果}\n本测试最终形成以下结果：\n"
+            "\\section*{四、主要输出结果}\n本测试最终形成以下结果：\n"
             + tex_enumerate(
                 [
                     "Fe-Cu-vacancy 典型测试算例；",
@@ -407,7 +320,7 @@ def build_latex(summary: dict[str, object]) -> None:
                 ],
                 "L{0.08\\linewidth}L{0.28\\linewidth}Y",
             ),
-            "\\section*{5. 验收展示内容}\n验收时重点展示：\n"
+            "\\section*{五、验收展示内容}\n验收时重点展示：\n"
             + tex_enumerate(
                 [
                     "软件适配结果：说明 Fe-Cu-vacancy 算例可以正常运行；",
@@ -418,33 +331,19 @@ def build_latex(summary: dict[str, object]) -> None:
                     "验收报告：汇总各阶段任务完成情况。",
                 ]
             ),
+            "\\subsection*{图形展示}",
+            tex_figure("../figures/material_evolution_curves.png", "温度、Cu density 与 vacancy density 条件下的材料演化曲线", "0.94\\linewidth"),
+            tex_figure_note("左图展示不同温度条件下平均能量随 KMC step 的变化；中图展示不同 Cu density 条件下最大 Cu 团簇尺寸变化，并去除了最高 Cu density 曲线以突出低中 Cu 含量差异；右图展示不同 vacancy density 条件下物理时间推进差异。"),
+            tex_figure("../figures/cu_cluster_structure.png", "Cu 团簇组织结构图", "0.74\\linewidth"),
+            tex_figure_note("图中选取最大 Cu 团簇增长最明显的算例，上排给出初始与最终 whole box 的 Cu 原子空间分布，下排给出局部放大区域；红色描边表示当前最大团簇，黄色点表示最终最大团簇中新加入的 Cu 位点，用于突出 initial 到 final 的团簇增长。"),
+            tex_figure("../figures/runtime_comparison.png", "优化前后运行时间对比", "0.80\\linewidth"),
+            tex_figure_note("左图使用对数坐标比较全量速率刷新 baseline 与增量更新模式的运行时间，右图给出各 lattice size 下的 measured speedup，用于展示性能优化趋势。"),
+            "\\section*{六、简要结论}\n"
+            "通过 Fe-Cu-vacancy 测试样例，本测试展示了 KMC 从材料能量计算、跨尺度数据生成、大规模并行计算展示到材料设计建议的完整流程。测试结果可支撑强关联材料体系的数值模拟、智能计算和优化设计任务验收。\n\n"
+            "关键结果摘要如下：",
             tex_table(
-                ["序号", "验收展示内容", "展示证据"],
+                ["项目", "结果"],
                 [
-                    [1, "软件适配结果：说明 Fe-Cu-vacancy 算例可以正常运行", "outputs/logs/model_call_log.txt; outputs/tables/stage_completion_matrix.csv"],
-                    [2, "性能优化结果：展示优化前后运行时间对比", "outputs/tables/performance_records.csv; outputs/figures/runtime_comparison.png"],
-                    [3, "跨尺度数据结果：展示不同温度、成分条件下的数据生成", "outputs/datasets/multiscale_dataset.csv; outputs/tables/energy_results.csv"],
-                    [4, "材料演化结果：展示能量变化曲线和 Cu 团簇结构", "outputs/figures/material_evolution_curves.png; outputs/figures/cu_cluster_structure.png"],
-                    [5, "设计优化结果：给出材料成分和组织调控建议", "outputs/reports/material_design_recommendations.md; outputs/tables/composition_structure_trends.csv"],
-                    [6, "验收报告：汇总各阶段任务完成情况", "outputs/reports/acceptance_report.pdf; outputs/reports/output_audit_against_test_plan.md"],
-                ],
-                "L{0.08\\linewidth}L{0.40\\linewidth}Y",
-            ),
-            "\\section*{6. 分阶段测试完成情况}",
-            tex_table(
-                ["阶段", "测试内容", "成果形式", "状态"],
-                [
-                    [r["stage"], r["test_content"], short_artifacts(r["generated_artifacts"]), status_label(r["status"])]
-                    for r in summary["stage_rows"]
-                ],
-                "L{0.08\\linewidth}L{0.34\\linewidth}Y L{0.10\\linewidth}",
-            ),
-            "\\section*{7. 关键结果}",
-            tex_table(
-                ["结果项", "数值或结论"],
-                [
-                    ["温度/成分/缺陷组合数量", len(summary["main_rows"])],
-                    ["lattice size 扫描数量", len(summary["lattice_rows"])],
                     ["总 KMC 算例数量", summary["case_count"]],
                     ["逐步 KMC 记录", summary["step_count"]],
                     ["能量结果行数", len(summary["energy_rows"])],
@@ -452,50 +351,17 @@ def build_latex(summary: dict[str, object]) -> None:
                     ["Cu 最大团簇范围", f"{cluster_min} 到 {cluster_max}"],
                     ["十种 lattice size speedup", speedups],
                     ["DeepH / DeepKS 并行扩展性记录", f"覆盖 1 到 {summary['max_nodes']} 节点"],
-                    ["输出清单记录文件数", f"{summary['manifest_count']}（不含 manifest 自身）"],
                 ],
                 "L{0.30\\linewidth}Y",
-            ),
-            "\\clearpage\n\\section*{8. 图形结果}",
-            tex_figure("../figures/material_evolution_curves.png", "温度、Cu density 与 vacancy density 条件下的材料演化曲线", "0.94\\linewidth"),
-            tex_figure_note("左图展示不同温度条件下平均能量随 KMC step 的变化；中图展示不同 Cu density 条件下最大 Cu 团簇尺寸变化，并去除了最高 Cu density 曲线以突出低中 Cu 含量差异；右图展示不同 vacancy density 条件下物理时间推进差异。"),
-            tex_figure("../figures/cu_cluster_structure.png", "Cu 团簇组织结构图", "0.74\\linewidth"),
-            tex_figure_note("图中选取最大 Cu 团簇增长最明显的算例，上排给出初始与最终 whole box 的 Cu 原子空间分布，下排给出局部放大区域；红色描边表示当前最大团簇，黄色点表示最终最大团簇中新加入的 Cu 位点，用于突出 initial 到 final 的团簇增长。"),
-            tex_figure("../figures/runtime_comparison.png", "优化前后运行时间对比", "0.80\\linewidth"),
-            tex_figure_note("左图使用对数坐标比较全量速率刷新 baseline 与增量更新模式的运行时间，右图给出各 lattice size 下的 measured speedup，用于展示性能优化趋势。"),
-            "\\section*{9. 材料设计建议}",
-            tex_itemize(
-                [
-                    f"单位位点能量最低组合为 {best_energy['case_id']}：T={fmt_temp(best_energy['temperature_K'])}，Cu={best_energy['cu_density']}，V={best_energy['v_density']}。",
-                    f"Cu 团簇最大组合为 {best_cluster['case_id']}：T={fmt_temp(best_cluster['temperature_K'])}，Cu={best_cluster['cu_density']}，V={best_cluster['v_density']}，max_cluster={best_cluster['final_cu_cluster_max']}。",
-                ]
-            ),
-            "\\section*{10. 输出文件索引与结论}\n"
-            "本测试已形成 Fe-Cu-vacancy 体系从典型算例、能量计算、跨尺度演化、性能对比、并行扩展性记录到材料设计建议的完整 KMC 测试链路，输出覆盖方案要求的主要结果，可用于验收汇报和后续复核。",
-            tex_table(
-                ["文档要求", "对应输出"],
-                [
-                    ["Fe-Cu-vacancy 典型测试算例", "outputs/cases/typical_cases.json"],
-                    ["能量计算结果表", "outputs/tables/energy_results.csv"],
-                    ["lattice size 扫描结果表", "outputs/tables/lattice_size_scan.csv"],
-                    ["软件适配和性能测试记录", "outputs/reports/software_adaptation_and_performance.md"],
-                    ["跨尺度数据集", "outputs/datasets/multiscale_dataset.csv; outputs/tables/multiscale_dataset.csv"],
-                    ["材料演化曲线", "outputs/figures/material_evolution_curves.png"],
-                    ["Cu 团簇组织结构图", "outputs/figures/cu_cluster_structure.png"],
-                    ["计算效率对比表", "outputs/tables/efficiency_comparison.csv"],
-                    ["材料设计优化建议", "outputs/reports/material_design_recommendations.md"],
-                    ["项目验收报告", "outputs/reports/acceptance_report.pdf; outputs/reports/acceptance_report.tex"],
-                ],
-                "L{0.32\\linewidth}Y",
             ),
         ]
     )
     TEX_OUT.write_text(
         tex_document(
-            "强关联材料多尺度计算 KMC 测试文档",
-            f"Fe-Cu-vacancy 合金体系测试 | 结果整理版 | {RUN_DATE}",
+            "强关联材料多尺度计算 KMC 测试报告",
+            f"Fe-Cu-vacancy 合金体系测试 | {RUN_DATE}",
             body,
-            "KMC 测试文档",
+            "KMC 测试报告",
         ),
         encoding="utf-8",
     )

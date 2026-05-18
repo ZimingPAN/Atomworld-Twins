@@ -129,35 +129,39 @@ def tex_document(title: str, subtitle: str, body: str, header: str) -> str:
 \usepackage{{url}}
 \usepackage[table]{{xcolor}}
 
-\definecolor{{kmcblue}}{{HTML}}{{2F5D97}}
-\definecolor{{kmcdark}}{{HTML}}{{1F2D3D}}
-\definecolor{{kmcmuted}}{{HTML}}{{5B6778}}
-\definecolor{{kmclight}}{{HTML}}{{EEF3F8}}
-\definecolor{{kmcline}}{{HTML}}{{BFCBDC}}
+\definecolor{{kmcblue}}{{HTML}}{{000000}}
+\definecolor{{kmcdark}}{{HTML}}{{000000}}
+\definecolor{{kmcmuted}}{{HTML}}{{333333}}
+\definecolor{{kmclight}}{{HTML}}{{F2F2F2}}
+\definecolor{{kmcline}}{{HTML}}{{777777}}
 
-\hypersetup{{colorlinks=true,linkcolor=kmcblue,urlcolor=kmcblue}}
-\setlength{{\parindent}}{{0pt}}
-\setlength{{\parskip}}{{0.45em}}
+\hypersetup{{colorlinks=false,hidelinks}}
+\setlength{{\parindent}}{{2em}}
+\setlength{{\parskip}}{{0.25em}}
 \renewcommand{{\arraystretch}}{{1.18}}
 \newcolumntype{{Y}}{{>{{\raggedright\arraybackslash}}X}}
 \newcolumntype{{L}}[1]{{>{{\raggedright\arraybackslash}}p{{#1}}}}
-\titleformat{{\section}}{{\Large\bfseries\color{{kmcblue}}}}{{}}{{0pt}}{{}}
-\titleformat{{\subsection}}{{\large\bfseries\color{{kmcdark}}}}{{}}{{0pt}}{{}}
+\titleformat{{\section}}{{\Large\bfseries}}{{}}{{0pt}}{{}}
+\titlespacing*{{\section}}{{0pt}}{{1.0em}}{{0.45em}}
+\titleformat{{\subsection}}{{\large\bfseries}}{{}}{{0pt}}{{}}
 \captionsetup{{font=small,labelfont=bf}}
-\setlist[itemize]{{leftmargin=1.65em,itemsep=0.12em,topsep=0.15em}}
+\setlist[itemize]{{leftmargin=2.2em,itemsep=0.10em,topsep=0.10em}}
+\setlist[enumerate]{{leftmargin=2.2em,itemsep=0.12em,topsep=0.10em}}
 \pagestyle{{fancy}}
 \fancyhf{{}}
-\lhead{{\color{{kmcmuted}}\small {latex_escape(header)}}}
-\rhead{{\color{{kmcmuted}}\small \thepage}}
+\lhead{{\small {latex_escape(header)}}}
+\rhead{{\small \thepage}}
 \renewcommand{{\headrulewidth}}{{0.25pt}}
 \renewcommand{{\footrulewidth}}{{0pt}}
 
 \begin{{document}}
 
-{{\Huge\bfseries\color{{kmcblue}} {latex_escape(title)}}}\par
+\begin{{center}}
+{{\LARGE\bfseries {latex_escape(title)}}}\par
 \vspace{{0.35em}}
-{{\large\color{{kmcmuted}} {latex_escape(subtitle)}}}\par
-\vspace{{1.0em}}
+{{\normalsize {latex_escape(subtitle)}}}\par
+\end{{center}}
+\vspace{{0.65em}}
 
 {body}
 
