@@ -41,6 +41,10 @@
       "bytes": 987
     },
     {
+      "path": "outputs/manifest.json",
+      "bytes": 2894
+    },
+    {
       "path": "outputs/reports/.DS_Store",
       "bytes": 8196
     },
@@ -59,6 +63,10 @@
     {
       "path": "outputs/reports/acceptance_report.tex",
       "bytes": 10984
+    },
+    {
+      "path": "outputs/reports/kmc_test_document.docx",
+      "bytes": 830735
     },
     {
       "path": "outputs/reports/kmc_test_document.md",
