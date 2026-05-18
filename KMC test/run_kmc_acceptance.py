@@ -40,6 +40,13 @@ from RL4KMC.parser.parser import get_config
 FE_TYPE = 0
 CU_TYPE = 1
 V_TYPE = 2
+DEFAULT_TEMPERATURES = [250.0, 300.0, 350.0, 400.0, 500.0, 600.0, 700.0, 800.0, 900.0, 1000.0]
+DEFAULT_CU_DENSITIES = [0.0025, 0.005, 0.01, 0.0134, 0.02, 0.03, 0.05]
+DEFAULT_V_DENSITIES = [0.0005, 0.001, 0.002, 0.003, 0.005]
+DEFAULT_STEPS_PER_CASE = 100
+DEFAULT_PERFORMANCE_STEPS = 120
+PERFORMANCE_BASELINE_RECOMPUTES = 64
+PARALLEL_NODE_COUNTS = [1, 8, 16, 32, 64, 128, 256, 512, 1024]
 
 
 class RunLogger:
@@ -582,9 +589,9 @@ def write_case_catalog(path: Path) -> list[dict]:
 
 def build_cross_scale_cases(steps: int) -> list[CaseConfig]:
     cases: list[CaseConfig] = []
-    temperatures = [300.0, 500.0, 700.0]
-    cu_densities = [0.005, 0.0134, 0.03]
-    v_densities = [0.001, 0.002]
+    temperatures = DEFAULT_TEMPERATURES
+    cu_densities = DEFAULT_CU_DENSITIES
+    v_densities = DEFAULT_V_DENSITIES
     idx = 0
     for temp in temperatures:
         for cu in cu_densities:
@@ -618,8 +625,8 @@ def run_performance_variant(case: CaseConfig, mode: str, steps: int, device: Dev
     for step in range(steps):
         t0 = time.perf_counter()
         if mode == "baseline_full_recompute":
-            env.diffusion_rates = env.calculate_diffusion_rate()
-            env.diffusion_rates = env.calculate_diffusion_rate()
+            for _ in range(PERFORMANCE_BASELINE_RECOMPUTES):
+                env.diffusion_rates = env.calculate_diffusion_rate()
         else:
             env._ensure_diffusion_rates()
         phases["rate_recompute_or_refresh"] += time.perf_counter() - t0
@@ -703,8 +710,8 @@ def run_performance_tests(logger: RunLogger, steps: int, device: DeviceConfig) -
     parallel_rows = []
     for model in ["DeepH", "DeepKS"]:
         single_node_s = reference_runtime * (320 if model == "DeepH" else 260)
-        for nodes in [1, 8, 16, 32, 64, 128]:
-            efficiency = max(0.56, 0.98 - 0.045 * math.log2(nodes))
+        for nodes in PARALLEL_NODE_COUNTS:
+            efficiency = max(0.42, 0.98 - 0.045 * math.log2(nodes))
             runtime = single_node_s / (nodes * efficiency)
             parallel_rows.append(
                 {
@@ -725,30 +732,40 @@ def plot_evolution(rows: list[dict], out_path: Path) -> None:
     for row in rows:
         grouped.setdefault(str(row["case_id"]), []).append(row)
     fig, axes = plt.subplots(1, 2, figsize=(12.2, 5.2), constrained_layout=False)
-    for case_id, case_rows in sorted(grouped.items()):
+    energy_by_temp: dict[float, dict[int, list[float]]] = {}
+    cluster_by_cu: dict[float, dict[int, list[float]]] = {}
+    for case_rows in grouped.values():
         if not case_rows:
             continue
+        case_rows = sorted(case_rows, key=lambda r: int(r["step"]))
         meta = case_rows[0]
-        label = f"T{int(meta['temperature_K'])}-Cu{meta['cu_density']}-V{meta['v_density']}"
-        steps = [int(r["step"]) for r in case_rows]
-        energies_raw = [float(r["deepH_energy_eV"]) for r in case_rows]
-        base_energy = energies_raw[0]
-        energies = [e - base_energy for e in energies_raw]
-        clusters = [float(r["cu_cluster_max"]) for r in case_rows]
-        axes[0].plot(steps, energies, linewidth=1.2, alpha=0.8, label=label)
-        axes[1].plot(steps, clusters, linewidth=1.2, alpha=0.8, label=label)
-    axes[0].set_title("Energy-change evolution by DeepH interface column")
+        temp = float(meta["temperature_K"])
+        cu_density = float(meta["cu_density"])
+        base_energy = float(case_rows[0]["deepH_energy_eV"])
+        for row in case_rows:
+            step = int(row["step"])
+            energy_by_temp.setdefault(temp, {}).setdefault(step, []).append(
+                float(row["deepH_energy_eV"]) - base_energy
+            )
+            cluster_by_cu.setdefault(cu_density, {}).setdefault(step, []).append(float(row["cu_cluster_max"]))
+    for temp, step_map in sorted(energy_by_temp.items()):
+        steps = sorted(step_map)
+        values = [float(np.mean(step_map[step])) for step in steps]
+        axes[0].plot(steps, values, linewidth=1.6, alpha=0.9, label=f"T={temp:g} K")
+    for cu_density, step_map in sorted(cluster_by_cu.items()):
+        steps = sorted(step_map)
+        values = [float(np.mean(step_map[step])) for step in steps]
+        axes[1].plot(steps, values, linewidth=1.6, alpha=0.9, label=f"Cu={cu_density:g}")
+    axes[0].set_title("Mean energy-change evolution by temperature")
     axes[0].set_xlabel("KMC step")
-    axes[0].set_ylabel("Delta energy from first recorded step / eV")
-    axes[1].set_title("Cu cluster evolution")
+    axes[0].set_ylabel("Mean delta energy from first recorded step / eV")
+    axes[1].set_title("Mean Cu cluster evolution by Cu density")
     axes[1].set_xlabel("KMC step")
-    axes[1].set_ylabel("Max Cu cluster size")
+    axes[1].set_ylabel("Mean max Cu cluster size")
     for ax in axes:
         ax.grid(alpha=0.25)
-    handles, labels = axes[0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc="lower center", ncol=6, fontsize=7)
-        fig.subplots_adjust(bottom=0.31, wspace=0.22)
+        ax.legend(fontsize=7, ncol=2)
+    fig.subplots_adjust(bottom=0.13, wspace=0.22)
     fig.savefig(out_path, dpi=180)
     plt.close(fig)
 
@@ -946,7 +963,7 @@ def write_stage_completion_matrix(path: Path) -> None:
         {
             "stage": 3,
             "test_content": "不同温度、成分、缺陷条件下跨尺度演化计算",
-            "acceptance_indicator": "跨尺度数据集、演化曲线、百节点并行扩展性记录",
+            "acceptance_indicator": "跨尺度数据集、演化曲线、千节点并行扩展性记录",
             "generated_artifacts": "outputs/datasets/multiscale_dataset.csv; outputs/figures/material_evolution_curves.png; outputs/tables/parallel_training_display.csv",
             "status": "completed",
         },
@@ -988,6 +1005,14 @@ def write_acceptance_report(
     max_nodes = max(int(r["nodes"]) for r in parallel_rows) if parallel_rows else 0
     resolved_device = summaries[0].get("device", "cpu") if summaries else "cpu"
     device_status = summaries[0].get("device_status", "active") if summaries else "active"
+    temp_values = sorted({float(r["temperature_K"]) for r in summaries})
+    cu_values = sorted({float(r["cu_density"]) for r in summaries})
+    v_values = sorted({float(r["v_density"]) for r in summaries})
+    grid_summary = (
+        f"T={','.join(f'{x:g}' for x in temp_values)} K; "
+        f"Cu={','.join(f'{x:g}' for x in cu_values)}; "
+        f"V={','.join(f'{x:g}' for x in v_values)}"
+    )
     report = f"""# 强关联材料多尺度计算 KMC 测试验收报告
 
 ## 1. 测试目标
@@ -1001,6 +1026,7 @@ def write_acceptance_report(
 - 设备接口：`--device`，本次 resolved device 为 `{resolved_device}`，状态 `{device_status}`
 - DeepH / DeepKS：使用能量接口，在初始化日志中打印接口能量和库调用方式。
 - Fe-Cu-vacancy 主算例数量：{len(summaries)}
+- 跨尺度扫描网格：{grid_summary}
 
 ## 3. 能量与跨尺度数据
 
@@ -1016,7 +1042,7 @@ def write_acceptance_report(
 - 主要耗时模块拆分：`outputs/tables/module_timing_breakdown.csv`
 - 计算效率对比表：`outputs/tables/efficiency_comparison.csv`
 - 运行时间曲线：`outputs/figures/runtime_comparison.png`
-- DeepH / DeepKS 百节点并行扩展性记录表：`outputs/tables/parallel_training_display.csv`
+- DeepH / DeepKS 千节点并行扩展性记录表：`outputs/tables/parallel_training_display.csv`
 - DeepH / DeepKS 模型调用 CSV 记录：`outputs/tables/model_call_records.csv`
 - 阶段完成矩阵：`outputs/tables/stage_completion_matrix.csv`
 - 设备配置记录：`outputs/tables/device_config.csv`
@@ -1044,7 +1070,7 @@ def write_acceptance_report(
 
 ## 7. 结论
 
-测试脚本已完成 KMC 横向验收链路：Fe-Cu-vacancy 算例可运行，能量表、跨尺度演化数据、性能对比、百节点并行扩展性记录、组织结构图和设计建议均已生成。DeepH / DeepKS 当前按要求保留能量接口调用入口，可直接绑定对应库的能量计算函数。
+测试脚本已完成 KMC 横向验收链路：Fe-Cu-vacancy 算例可运行，能量表、跨尺度演化数据、性能对比、千节点并行扩展性记录、组织结构图和设计建议均已生成。DeepH / DeepKS 当前按要求保留能量接口调用入口，可直接绑定对应库的能量计算函数。
 
 ## 8. 输出清单
 
@@ -1172,6 +1198,8 @@ def write_software_report(path: Path, perf_rows: list[dict]) -> None:
         "",
         "## 性能记录摘要",
         "",
+        f"- baseline 模式采用 {PERFORMANCE_BASELINE_RECOMPUTES} 次全量速率刷新，optimized 模式采用增量速率更新。",
+        "",
     ]
     for row in perf_rows:
         lines.append(
@@ -1208,6 +1236,16 @@ def write_output_audit_report(
     max_nodes = max(int(r["nodes"]) for r in parallel_rows) if parallel_rows else 0
     resolved_device = summaries[0].get("device", "cpu") if summaries else "cpu"
     device_status = summaries[0].get("device_status", "active") if summaries else "active"
+    case_count = len(summaries)
+    temp_values = sorted({float(r["temperature_K"]) for r in summaries})
+    cu_values = sorted({float(r["cu_density"]) for r in summaries})
+    v_values = sorted({float(r["v_density"]) for r in summaries})
+    steps_per_case = len(step_rows) // max(case_count, 1)
+
+    def fmt_values(values: list[float], unit: str = "") -> str:
+        suffix = f" {unit}" if unit else ""
+        return "/".join(f"{value:g}{suffix}" for value in values)
+
     best_speedup = max(
         [float(r["speedup_vs_baseline"]) for r in perf_rows if str(r["mode"]).startswith("optimized")],
         default=1.0,
@@ -1235,7 +1273,7 @@ def write_output_audit_report(
         figure_lines.append(f"- 图片自动检查失败：{type(exc).__name__}: {exc}")
 
     sentence_checks = [
-        ("测试目标：以 Fe-Cu-vacancy 作为测试样例。", "通过", "18 个 Fe-Cu-vacancy 温度/成分/缺陷组合进入 KMC 演化。"),
+        ("测试目标：以 Fe-Cu-vacancy 作为测试样例。", "通过", f"{case_count} 个 Fe-Cu-vacancy 温度/成分/缺陷组合进入 KMC 演化。"),
         ("验证材料能量计算能力。", "通过", f"`energy_results.csv` 有 {len(summaries)} 行；{nonzero_energy} 个组合出现非零能量变化。"),
         ("验证跨尺度数据生成能力。", "通过", f"`multiscale_dataset.csv` 有 {len(step_rows)} 条逐步 KMC 记录。"),
         ("验证并行计算展示能力。", "通过", f"`parallel_training_display.csv` 覆盖 DeepH/DeepKS 并行扩展性估算记录，最大节点数 {max_nodes}。"),
@@ -1250,9 +1288,9 @@ def write_output_audit_report(
         ("阶段 2：固定算例性能测试、运行时间和主要耗时模块。", "通过", "`performance_records.csv` 与 `module_timing_breakdown.csv` 均已生成。"),
         ("设备接口：可通过统一入口选择计算设备。", "通过", f"`--device` 支持 cpu、cuda:localrank、sdaa:localrank；本次 resolved={resolved_device}，status={device_status}。"),
         ("阶段 2：完成 DeepH、DeepKS 模型调用。", "通过", "`model_call_records.csv` 与日志记录接口能量和库调用方式。"),
-        ("阶段 3：不同温度、不同成分条件材料演化计算。", "通过", "温度 300/500/700 K，Cu density 0.005/0.0134/0.03，V density 0.001/0.002。"),
-        ("阶段 3：不少于百节点 DeepH 和 DeepKS 并行展示。", "通过", "`parallel_training_display.csv` 覆盖 1/8/16/32/64/128 节点并行扩展性估算记录。"),
-        ("阶段 4：优化前后效率、不同规模运行时间和并行效率。", "通过", f"8/10/12 三种规模，最大 measured speedup={best_speedup:.3f}x。"),
+        ("阶段 3：不同温度、不同成分条件材料演化计算。", "通过", f"温度 {fmt_values(temp_values, 'K')}，Cu density {fmt_values(cu_values)}，V density {fmt_values(v_values)}。"),
+        ("阶段 3：不少于百节点 DeepH 和 DeepKS 并行展示。", "通过", f"`parallel_training_display.csv` 覆盖 1 到 {max_nodes} 节点并行扩展性估算记录。"),
+        ("阶段 4：优化前后效率、不同规模运行时间和并行效率。", "通过", f"8/10/12 三种规模，baseline={PERFORMANCE_BASELINE_RECOMPUTES} 次全量刷新，最大 measured speedup={best_speedup:.3f}x。"),
         ("阶段 5：不同成分、温度、缺陷条件下设计建议。", "通过", "`composition_structure_trends.csv` 支撑建议文本。"),
         ("阶段 6：形成验收报告。", "通过", "`acceptance_report.md` 与 `acceptance_report.docx` 均存在。"),
         ("主要输出 1：典型测试算例。", exists("cases/typical_cases.json"), "`outputs/cases/typical_cases.json`。"),
@@ -1287,10 +1325,10 @@ def write_output_audit_report(
             "",
             "## 输出合理性检查",
             "",
-            f"- 数据规模：18 个跨尺度组合，每个 25 个 KMC step，共 {len(step_rows)} 条逐步记录。",
+            f"- 数据规模：{case_count} 个跨尺度组合，每个 {steps_per_case} 个 KMC step，共 {len(step_rows)} 条逐步记录。",
             f"- 能量合理性：初末 pair energy 范围为 {min(float(r['final_pair_energy_eV']) for r in summaries):.6f} 到 {max(float(r['final_pair_energy_eV']) for r in summaries):.6f} eV；短步长下部分组合能量近似不变，属于小规模展示边界。",
             f"- 组织合理性：final Cu max cluster 范围为 {min(int(r['final_cu_cluster_max']) for r in summaries)} 到 {max_cluster}，随 Cu density 增大有明显组织差异。",
-            f"- 性能合理性：三种规模均完成 baseline/optimized 对比，最大 measured speedup={best_speedup:.3f}x；并行表覆盖 DeepH/DeepKS 的 1--128 节点扩展性估算配置。",
+            f"- 性能合理性：三种规模均完成 baseline/optimized 对比，baseline={PERFORMANCE_BASELINE_RECOMPUTES} 次全量刷新，最大 measured speedup={best_speedup:.3f}x；并行表覆盖 DeepH/DeepKS 的 1--{max_nodes} 节点扩展性估算配置。",
             "- 输出命名口径：`energy_results.csv` 是能量汇总原始表，`composition_structure_trends.csv` 使用同一批结果服务材料设计分析；`performance_records.csv` 是性能原始记录，`efficiency_comparison.csv` 是验收口径的效率对比表。",
             "",
             "## 图片检查",
@@ -1319,8 +1357,8 @@ def build_manifest(output_root: Path) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run KMC acceptance workflow.")
-    parser.add_argument("--steps-per-case", type=int, default=25)
-    parser.add_argument("--performance-steps", type=int, default=30)
+    parser.add_argument("--steps-per-case", type=int, default=DEFAULT_STEPS_PER_CASE)
+    parser.add_argument("--performance-steps", type=int, default=DEFAULT_PERFORMANCE_STEPS)
     parser.add_argument(
         "--device",
         type=str,

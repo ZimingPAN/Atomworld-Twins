@@ -1,3 +1,3 @@
 case_id,interface_mode,library_call_plan,model,printed_initial_energy_eV,production_library_status
-ms_000,acceptance_energy_interface,"DeepHCalculator(model_dir='models/deeph_fecu_vacancy') -> predict_hamiltonian(structure) -> total_energy(hamiltonian, structure)",DeepH,-14783.052996,ready_to_bind_when_runtime_available
-ms_000,acceptance_energy_interface,DeepKSCalculator(model='models/deepks_fecu_vacancy.pt') -> get_potential_energy(structure),DeepKS,-14783.049596,ready_to_bind_when_runtime_available
+ms_000,acceptance_energy_interface,"DeepHCalculator(model_dir='models/deeph_fecu_vacancy') -> predict_hamiltonian(structure) -> total_energy(hamiltonian, structure)",DeepH,-14802.647688,ready_to_bind_when_runtime_available
+ms_000,acceptance_energy_interface,DeepKSCalculator(model='models/deepks_fecu_vacancy.pt') -> get_potential_energy(structure),DeepKS,-14802.646137999998,ready_to_bind_when_runtime_available

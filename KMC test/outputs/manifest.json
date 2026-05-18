@@ -6,63 +6,67 @@
     },
     {
       "path": "outputs/datasets/cu_cluster_coordinates.csv",
-      "bytes": 6083
+      "bytes": 10243
     },
     {
       "path": "outputs/datasets/kmc_snapshots.csv",
-      "bytes": 46111
+      "bytes": 1096102
     },
     {
       "path": "outputs/datasets/multiscale_dataset.csv",
-      "bytes": 111162
+      "bytes": 8537023
     },
     {
       "path": "outputs/figures/cu_cluster_structure.png",
-      "bytes": 233955
+      "bytes": 311282
     },
     {
       "path": "outputs/figures/material_evolution_curves.png",
-      "bytes": 173192
+      "bytes": 265359
     },
     {
       "path": "outputs/figures/runtime_comparison.png",
-      "bytes": 45509
+      "bytes": 46847
     },
     {
       "path": "outputs/logs/model_call_log.txt",
-      "bytes": 2621
+      "bytes": 30532
+    },
+    {
+      "path": "outputs/logs/performance_refresh_log.txt",
+      "bytes": 299
     },
     {
       "path": "outputs/reports/acceptance_report.docx",
-      "bytes": 12003
+      "bytes": 12095
     },
     {
       "path": "outputs/reports/acceptance_report.md",
-      "bytes": 3163
+      "bytes": 3315
     },
     {
       "path": "outputs/reports/kmc_test_document.docx",
-      "bytes": 453931
+      "bytes": 627191
     },
     {
       "path": "outputs/reports/kmc_test_document.md",
-      "bytes": 5408
+      "bytes": 5645
     },
     {
       "path": "outputs/reports/material_design_recommendations.md",
-      "bytes": 1337
+      "bytes": 1341
     },
     {
       "path": "outputs/reports/output_audit_against_test_plan.md",
-      "bytes": 6026
+      "bytes": 6186
     },
     {
       "path": "outputs/reports/software_adaptation_and_performance.md",
-      "bytes": 1190
+      "bytes": 1284
     },
     {
       "path": "outputs/tables/composition_structure_trends.csv",
-      "bytes": 5135
+      "bytes": 93040
     },
     {
       "path": "outputs/tables/device_config.csv",
@@ -70,27 +74,27 @@
     },
     {
       "path": "outputs/tables/efficiency_comparison.csv",
-      "bytes": 1810
+      "bytes": 1799
     },
     {
       "path": "outputs/tables/energy_results.csv",
-      "bytes": 5135
+      "bytes": 93040
     },
     {
       "path": "outputs/tables/model_call_records.csv",
-      "bytes": 509
+      "bytes": 515
     },
     {
       "path": "outputs/tables/module_timing_breakdown.csv",
-      "bytes": 2405
+      "bytes": 2398
     },
     {
       "path": "outputs/tables/parallel_training_display.csv",
-      "bytes": 1339
+      "bytes": 1954
     },
     {
       "path": "outputs/tables/performance_records.csv",
-      "bytes": 1810
+      "bytes": 1799
     },
     {
       "path": "outputs/tables/stage_completion_matrix.csv",

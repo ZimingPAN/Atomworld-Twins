@@ -10,6 +10,15 @@ python run_kmc_acceptance.py
 
 All generated files are written under `outputs/`. The script recreates that folder on each run.
 
+Default workload:
+
+- Temperature grid: `250, 300, 350, 400, 500, 600, 700, 800, 900, 1000 K`
+- Cu density grid: `0.0025, 0.005, 0.01, 0.0134, 0.02, 0.03, 0.05`
+- Vacancy density grid: `0.0005, 0.001, 0.002, 0.003, 0.005`
+- Cross-scale cases: `350`
+- KMC steps per case: `100`
+- Parallel scaling record: up to `1024` nodes
+
 Device selection uses one interface:
 
 ```bash
@@ -78,4 +87,4 @@ For DOCX layout review, render the document with LibreOffice or an equivalent DO
 
 ## 中文说明
 
-本文件夹包含 KMC 验收测试脚本、输出数据、图表和测试文档。核心流程是先运行 `run_kmc_acceptance.py` 生成 `outputs/`，再运行 `build_kmc_test_document.py` 生成汇报用测试文档。设备统一通过 `--device` 传入，支持 `cpu`、`cuda:localrank` 和 `sdaa:localrank` 等形式；设备解析结果会写入 `outputs/tables/device_config.csv`。
+本文件夹包含 KMC 验收测试脚本、输出数据、图表和测试文档。核心流程是先运行 `run_kmc_acceptance.py` 生成 `outputs/`，再运行 `build_kmc_test_document.py` 生成汇报用测试文档。默认扫描 10 个温度、7 个 Cu 含量、5 个 vacancy 含量，共 350 组，每组 100 个 KMC step，并行扩展性记录覆盖到 1024 节点。设备统一通过 `--device` 传入，支持 `cpu`、`cuda:localrank` 和 `sdaa:localrank` 等形式；设备解析结果会写入 `outputs/tables/device_config.csv`。

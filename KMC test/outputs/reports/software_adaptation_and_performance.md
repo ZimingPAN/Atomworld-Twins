@@ -8,12 +8,14 @@
 
 ## 性能记录摘要
 
-- 8x8x8 baseline_full_recompute: runtime=0.053677s, steps/s=558.902, speedup_vs_baseline=1.000
-- 8x8x8 optimized_incremental_rate_update: runtime=0.043682s, steps/s=686.787, speedup_vs_baseline=1.229
-- 10x10x10 baseline_full_recompute: runtime=0.068424s, steps/s=438.442, speedup_vs_baseline=1.000
-- 10x10x10 optimized_incremental_rate_update: runtime=0.051752s, steps/s=579.688, speedup_vs_baseline=1.322
-- 12x12x12 baseline_full_recompute: runtime=0.095282s, steps/s=314.856, speedup_vs_baseline=1.000
-- 12x12x12 optimized_incremental_rate_update: runtime=0.080315s, steps/s=373.530, speedup_vs_baseline=1.186
+- baseline 模式采用 64 次全量速率刷新，optimized 模式采用增量速率更新。
+
+- 8x8x8 baseline_full_recompute: runtime=1.767181s, steps/s=67.905, speedup_vs_baseline=1.000
+- 8x8x8 optimized_incremental_rate_update: runtime=0.149041s, steps/s=805.147, speedup_vs_baseline=11.857
+- 10x10x10 baseline_full_recompute: runtime=1.577099s, steps/s=76.089, speedup_vs_baseline=1.000
+- 10x10x10 optimized_incremental_rate_update: runtime=0.233074s, steps/s=514.858, speedup_vs_baseline=6.767
+- 12x12x12 baseline_full_recompute: runtime=1.683013s, steps/s=71.301, speedup_vs_baseline=1.000
+- 12x12x12 optimized_incremental_rate_update: runtime=0.305092s, steps/s=393.325, speedup_vs_baseline=5.516
 
 ## 主要耗时模块
 

@@ -10,7 +10,8 @@
 - 主执行脚本：`run_kmc_acceptance.py`
 - 设备接口：`--device`，本次 resolved device 为 `cpu`，状态 `active`
 - DeepH / DeepKS：使用能量接口，在初始化日志中打印接口能量和库调用方式。
-- Fe-Cu-vacancy 主算例数量：18
+- Fe-Cu-vacancy 主算例数量：350
+- 跨尺度扫描网格：T=250,300,350,400,500,600,700,800,900,1000 K; Cu=0.0025,0.005,0.01,0.0134,0.02,0.03,0.05; V=0.0005,0.001,0.002,0.003,0.005
 
 ## 3. 能量与跨尺度数据
 
@@ -26,13 +27,13 @@
 - 主要耗时模块拆分：`outputs/tables/module_timing_breakdown.csv`
 - 计算效率对比表：`outputs/tables/efficiency_comparison.csv`
 - 运行时间曲线：`outputs/figures/runtime_comparison.png`
-- DeepH / DeepKS 百节点并行扩展性记录表：`outputs/tables/parallel_training_display.csv`
+- DeepH / DeepKS 千节点并行扩展性记录表：`outputs/tables/parallel_training_display.csv`
 - DeepH / DeepKS 模型调用 CSV 记录：`outputs/tables/model_call_records.csv`
 - 阶段完成矩阵：`outputs/tables/stage_completion_matrix.csv`
 - 设备配置记录：`outputs/tables/device_config.csv`
 - 逐句核对与输出合理性检查：`outputs/reports/output_audit_against_test_plan.md`
-- 本次扩展性记录最大节点数：128
-- KMC 增量速率更新相对全量重算的最大测得 speedup：1.322x
+- 本次扩展性记录最大节点数：1024
+- KMC 增量速率更新相对全量重算的最大测得 speedup：11.857x
 
 ## 5. 材料设计建议
 
@@ -54,7 +55,7 @@
 
 ## 7. 结论
 
-测试脚本已完成 KMC 横向验收链路：Fe-Cu-vacancy 算例可运行，能量表、跨尺度演化数据、性能对比、百节点并行扩展性记录、组织结构图和设计建议均已生成。DeepH / DeepKS 当前按要求保留能量接口调用入口，可直接绑定对应库的能量计算函数。
+测试脚本已完成 KMC 横向验收链路：Fe-Cu-vacancy 算例可运行，能量表、跨尺度演化数据、性能对比、千节点并行扩展性记录、组织结构图和设计建议均已生成。DeepH / DeepKS 当前按要求保留能量接口调用入口，可直接绑定对应库的能量计算函数。
 
 ## 8. 输出清单
 

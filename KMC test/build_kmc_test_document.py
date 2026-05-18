@@ -215,14 +215,23 @@ def make_summary() -> dict[str, object]:
     cluster_sizes = [int(r["final_cu_cluster_max"]) for r in energy_rows]
     best_energy = min(trend_rows, key=lambda r: float(r["final_pair_energy_per_site_eV"]))
     best_cluster = max(trend_rows, key=lambda r: int(r["final_cu_cluster_max"]))
+    temp_values = sorted({float(r["temperature_K"]) for r in energy_rows})
+    cu_values = sorted({float(r["cu_density"]) for r in energy_rows})
+    v_values = sorted({float(r["v_density"]) for r in energy_rows})
+    step_count = sum(int(r["steps_completed"]) for r in energy_rows)
 
     return {
         "energy_rows": energy_rows,
+        "step_count": step_count,
         "perf_rows": perf_rows,
         "parallel_rows": parallel_rows,
         "device": device_rows[0],
         "stage_rows": stage_rows,
         "manifest_count": len(manifest_entries([DOCX_OUT, MD_OUT])),
+        "case_count": len(energy_rows),
+        "temperature_values": temp_values,
+        "cu_values": cu_values,
+        "v_values": v_values,
         "speedups": speedups,
         "energy_range": (min(final_energies), max(final_energies)),
         "cluster_range": (min(cluster_sizes), max(cluster_sizes)),
@@ -237,6 +246,9 @@ def build_markdown(summary: dict[str, object]) -> None:
     best_energy = summary["best_energy"]
     best_cluster = summary["best_cluster"]
     speedups = ", ".join(f"{v:.3f}x" for v in summary["speedups"])
+    temp_values = ", ".join(f"{v:g} K" for v in summary["temperature_values"])
+    cu_values = ", ".join(f"{v:g}" for v in summary["cu_values"])
+    v_values = ", ".join(f"{v:g}" for v in summary["v_values"])
     energy_min, energy_max = summary["energy_range"]
     cluster_min, cluster_max = summary["cluster_range"]
     stage_lines = "\n".join(
@@ -270,6 +282,8 @@ Fe-Cu-vacancy 合金体系测试 | 结果整理版 | {RUN_DATE}
 
 本次运行设备配置为 requested={device['requested_device']}，resolved={device['resolved_device']}，backend={device['backend']}，status={device['status']}。脚本统一通过 `--device` 传入计算设备，并支持 `cpu`、`cuda:localrank` 和 `sdaa:localrank`。
 
+本次跨尺度扫描网格包含温度 {temp_values}，Cu density {cu_values}，vacancy density {v_values}。
+
 | 配置项 | 取值 |
 | --- | --- |
 | 主执行脚本 | `run_kmc_acceptance.py` |
@@ -289,8 +303,8 @@ Fe-Cu-vacancy 合金体系测试 | 结果整理版 | {RUN_DATE}
 
 | 结果项 | 数值或结论 |
 | --- | --- |
-| 跨尺度组合数量 | 18 |
-| 逐步 KMC 记录 | 450 |
+| 跨尺度组合数量 | {summary['case_count']} |
+| 逐步 KMC 记录 | {summary['step_count']} |
 | 能量结果行数 | {len(summary['energy_rows'])} |
 | 最终 pair energy 范围 | {energy_min:.6f} 到 {energy_max:.6f} eV |
 | Cu 最大团簇范围 | {cluster_min} 到 {cluster_max} |
@@ -362,11 +376,14 @@ def build_docx(summary: dict[str, object]) -> None:
     speedups = summary["speedups"]
     energy_min, energy_max = summary["energy_range"]
     cluster_min, cluster_max = summary["cluster_range"]
+    temp_values = ", ".join(f"{v:g} K" for v in summary["temperature_values"])
+    cu_values = ", ".join(f"{v:g}" for v in summary["cu_values"])
+    v_values = ", ".join(f"{v:g}" for v in summary["v_values"])
     add_metric_strip(
         doc,
         [
-            ("跨尺度组合", "18"),
-            ("逐步记录", "450"),
+            ("跨尺度组合", str(summary["case_count"])),
+            ("逐步记录", str(summary["step_count"])),
             ("最大节点记录", str(summary["max_nodes"])),
             ("最大 speedup", f"{max(speedups):.3f}x"),
         ],
@@ -401,6 +418,7 @@ def build_docx(summary: dict[str, object]) -> None:
         doc,
         f"本次运行设备配置为 requested={device['requested_device']}，resolved={device['resolved_device']}，backend={device['backend']}，status={device['status']}。脚本统一通过 --device 传入计算设备，并支持 cpu、cuda:localrank 和 sdaa:localrank。",
     )
+    add_paragraph(doc, f"本次跨尺度扫描网格包含温度 {temp_values}，Cu density {cu_values}，vacancy density {v_values}。")
     add_table(
         doc,
         ["配置项", "取值"],
@@ -429,8 +447,8 @@ def build_docx(summary: dict[str, object]) -> None:
         doc,
         ["结果项", "数值或结论"],
         [
-            ["跨尺度组合数量", "18"],
-            ["逐步 KMC 记录", "450"],
+            ["跨尺度组合数量", str(summary["case_count"])],
+            ["逐步 KMC 记录", str(summary["step_count"])],
             ["能量结果行数", str(len(summary["energy_rows"]))],
             ["最终 pair energy 范围", f"{energy_min:.6f} 到 {energy_max:.6f} eV"],
             ["Cu 最大团簇范围", f"{cluster_min} 到 {cluster_max}"],
