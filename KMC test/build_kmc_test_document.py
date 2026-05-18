@@ -5,7 +5,7 @@ import csv
 import json
 from pathlib import Path
 
-from kmc_latex_tools import compile_pdf, tex_document, tex_enumerate, tex_figure, tex_itemize, tex_metric_strip, tex_table
+from kmc_latex_tools import compile_pdf, tex_document, tex_enumerate, tex_figure, tex_figure_note, tex_itemize, tex_metric_strip, tex_table
 
 
 ROOT = Path(__file__).resolve().parent
@@ -267,15 +267,16 @@ Fe-Cu-vacancy 合金体系测试 | 结果整理版 | {RUN_DATE}
 ## 8. 图形结果
 
 - 图 1：`outputs/figures/material_evolution_curves.png`，展示温度下能量变化、Cu density 下团簇演化、vacancy density 下物理时间演化。
+  - 图示说明：左图展示不同温度条件下平均能量随 KMC step 的变化；中图展示不同 Cu density 条件下最大 Cu 团簇尺寸变化，并去除了最高 Cu density 曲线以突出低中 Cu 含量差异；右图展示不同 vacancy density 条件下物理时间推进差异。
 - 图 2：`outputs/figures/cu_cluster_structure.png`，展示 Cu 团簇组织结构图。
+  - 图示说明：图中选取最大 Cu 团簇增长最明显的算例，上排给出初始与最终 whole box 的 Cu 原子空间分布，下排给出局部放大区域；红色描边表示当前最大团簇，黄色点表示最终最大团簇中新加入的 Cu 位点，用于突出 initial 到 final 的团簇增长。
 - 图 3：`outputs/figures/runtime_comparison.png`，展示优化前后运行时间对比。
+  - 图示说明：左图使用对数坐标比较全量速率刷新 baseline 与增量更新模式的运行时间，右图给出各 lattice size 下的 measured speedup，用于展示性能优化趋势。
 
 ## 9. 材料设计建议
 
 - 单位位点能量最低组合为 `{best_energy['case_id']}`：T={fmt_temp(best_energy['temperature_K'])}，Cu={best_energy['cu_density']}，V={best_energy['v_density']}。
 - Cu 团簇最大组合为 `{best_cluster['case_id']}`：T={fmt_temp(best_cluster['temperature_K'])}，Cu={best_cluster['cu_density']}，V={best_cluster['v_density']}，max_cluster={best_cluster['final_cu_cluster_max']}。
-- 若目标是降低能量并保持均匀固溶，建议优先采用 Fe-rich、低到中等 Cu 配方，并控制 vacancy density。
-- 若目标是展示 Cu-rich clustering 或析出趋势，建议提高 Cu density，并在中高温条件下延长 KMC 演化步数。
 
 ## 10. 输出文件索引与结论
 
@@ -457,15 +458,16 @@ def build_latex(summary: dict[str, object]) -> None:
             ),
             "\\clearpage\n\\section*{8. 图形结果}",
             tex_figure("../figures/material_evolution_curves.png", "温度、Cu density 与 vacancy density 条件下的材料演化曲线", "0.94\\linewidth"),
+            tex_figure_note("左图展示不同温度条件下平均能量随 KMC step 的变化；中图展示不同 Cu density 条件下最大 Cu 团簇尺寸变化，并去除了最高 Cu density 曲线以突出低中 Cu 含量差异；右图展示不同 vacancy density 条件下物理时间推进差异。"),
             tex_figure("../figures/cu_cluster_structure.png", "Cu 团簇组织结构图", "0.74\\linewidth"),
+            tex_figure_note("图中选取最大 Cu 团簇增长最明显的算例，上排给出初始与最终 whole box 的 Cu 原子空间分布，下排给出局部放大区域；红色描边表示当前最大团簇，黄色点表示最终最大团簇中新加入的 Cu 位点，用于突出 initial 到 final 的团簇增长。"),
             tex_figure("../figures/runtime_comparison.png", "优化前后运行时间对比", "0.80\\linewidth"),
+            tex_figure_note("左图使用对数坐标比较全量速率刷新 baseline 与增量更新模式的运行时间，右图给出各 lattice size 下的 measured speedup，用于展示性能优化趋势。"),
             "\\section*{9. 材料设计建议}",
             tex_itemize(
                 [
                     f"单位位点能量最低组合为 {best_energy['case_id']}：T={fmt_temp(best_energy['temperature_K'])}，Cu={best_energy['cu_density']}，V={best_energy['v_density']}。",
                     f"Cu 团簇最大组合为 {best_cluster['case_id']}：T={fmt_temp(best_cluster['temperature_K'])}，Cu={best_cluster['cu_density']}，V={best_cluster['v_density']}，max_cluster={best_cluster['final_cu_cluster_max']}。",
-                    "若目标是降低能量并保持均匀固溶，建议优先采用 Fe-rich、低到中等 Cu 配方，并控制 vacancy density。",
-                    "若目标是展示 Cu-rich clustering 或析出趋势，建议提高 Cu density，并在中高温条件下延长 KMC 演化步数。",
                 ]
             ),
             "\\section*{10. 输出文件索引与结论}\n"

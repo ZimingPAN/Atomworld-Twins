@@ -68,15 +68,18 @@ def tex_table(headers: list[object], rows: list[list[object]], colspec: str) -> 
     out = [
         "\\begin{center}",
         "\\small",
-        "\\renewcommand{\\arraystretch}{1.24}",
+        "\\renewcommand{\\arraystretch}{1.30}",
+        "\\arrayrulecolor{kmcline}",
         rf"\begin{{tabularx}}{{\linewidth}}{{{colspec}}}",
-        "\\toprule",
+        "\\hline",
+        "\\rowcolor{kmclight}",
         " & ".join(rf"\textbf{{{latex_escape(header)}}}" for header in headers) + r" \\",
-        "\\midrule",
+        "\\hline",
     ]
     for row in rows:
         out.append(" & ".join(latex_escape(cell) for cell in row) + r" \\")
-    out.extend(["\\bottomrule", "\\end{tabularx}", "\\end{center}"])
+        out.append("\\hline")
+    out.extend(["\\end{tabularx}", "\\arrayrulecolor{black}", "\\end{center}"])
     return "\n".join(out)
 
 
@@ -88,6 +91,18 @@ def tex_figure(path: str, caption: str, width: str = "0.92\\linewidth") -> str:
             rf"\includegraphics[width={width}]{{{path}}}",
             rf"\caption{{{latex_escape(caption)}}}",
             "\\end{figure}",
+        ]
+    )
+
+
+def tex_figure_note(text: str) -> str:
+    return "\n".join(
+        [
+            "\\begin{center}",
+            "\\begin{minipage}{0.90\\linewidth}",
+            rf"{{\small\color{{kmcmuted}}\textbf{{图示说明：}}{latex_escape(text)}}}",
+            "\\end{minipage}",
+            "\\end{center}",
         ]
     )
 
@@ -118,6 +133,7 @@ def tex_document(title: str, subtitle: str, body: str, header: str) -> str:
 \definecolor{{kmcdark}}{{HTML}}{{1F2D3D}}
 \definecolor{{kmcmuted}}{{HTML}}{{5B6778}}
 \definecolor{{kmclight}}{{HTML}}{{EEF3F8}}
+\definecolor{{kmcline}}{{HTML}}{{BFCBDC}}
 
 \hypersetup{{colorlinks=true,linkcolor=kmcblue,urlcolor=kmcblue}}
 \setlength{{\parindent}}{{0pt}}

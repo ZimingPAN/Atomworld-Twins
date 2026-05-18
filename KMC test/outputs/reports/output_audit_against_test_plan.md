@@ -13,7 +13,7 @@
 | 测试体系包括 Fe-Cu 溶质体系。 | 通过 | `typical_cases.json` 包含 Fe-Cu solute 典型算例定义。 |
 | 测试体系包括 Fe-vacancy 缺陷体系。 | 通过 | `typical_cases.json` 包含 Fe-vacancy defect 典型算例定义。 |
 | 测试体系包括 Fe-Cu-vacancy 复合体系。 | 通过 | `typical_cases.json` 和跨尺度数据均覆盖该体系。 |
-| 测试体系包括 Fe-Cu 团簇演化体系。 | 通过 | `cu_cluster_structure.png` 选取最大团簇组合，最终 max_cluster=167。 |
+| 测试体系包括 Fe-Cu 团簇演化体系。 | 通过 | `cu_cluster_structure.png` 选取最大团簇增长算例 ms_066，Cmax 113 -> 139，增长 26。 |
 | 阶段 1：基础算例适配、能量计算、结果可后续分析。 | 通过 | `typical_cases.json`、`energy_results.csv`、`kmc_snapshots.csv` 可直接复用。 |
 | 阶段 1：完成多散射理论密度泛函软件、DeepH 算法适配。 | 通过 | KMC pair energy 作为能量主结果；DeepH/DeepKS 保留能量接口与库调用路径；多散射 DFT 口径通过同一结构快照接口对接。 |
 | 阶段 2：固定算例性能测试、运行时间和主要耗时模块。 | 通过 | `performance_records.csv` 与 `module_timing_breakdown.csv` 均已生成。 |
@@ -51,6 +51,6 @@
 
 ## 图片检查
 
-- `figures/material_evolution_curves.png`：尺寸 2916x936，非空内容区域 (251, 74, 2678, 890)，mean_diff=8.37，判定：非空且可视。
-- `figures/cu_cluster_structure.png`：尺寸 1170x990，非空内容区域 (170, 8, 1109, 977)，mean_diff=14.70，判定：非空且可视。
+- `figures/material_evolution_curves.png`：尺寸 2916x936，非空内容区域 (251, 74, 2678, 890)，mean_diff=8.20，判定：非空且可视。
+- `figures/cu_cluster_structure.png`：尺寸 1908x1475，非空内容区域 (159, 7, 1900, 1457)，mean_diff=11.15，判定：非空且可视。
 - `figures/runtime_comparison.png`：尺寸 2232x864，非空内容区域 (7, 8, 2225, 851)，mean_diff=17.48，判定：非空且可视。

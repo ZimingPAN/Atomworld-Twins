@@ -23,6 +23,7 @@
 \definecolor{kmcdark}{HTML}{1F2D3D}
 \definecolor{kmcmuted}{HTML}{5B6778}
 \definecolor{kmclight}{HTML}{EEF3F8}
+\definecolor{kmcline}{HTML}{BFCBDC}
 
 \hypersetup{colorlinks=true,linkcolor=kmcblue,urlcolor=kmcblue}
 \setlength{\parindent}{0pt}
@@ -74,24 +75,37 @@
 
 \begin{center}
 \small
-\renewcommand{\arraystretch}{1.24}
+\renewcommand{\arraystretch}{1.30}
+\arrayrulecolor{kmcline}
 \begin{tabularx}{\linewidth}{L{0.28\linewidth}Y}
-\toprule
+\hline
+\rowcolor{kmclight}
 \textbf{项目} & \textbf{本次结果} \\
-\midrule
+\hline
 温度扫描 & 250 K, 300 K, 350 K, 400 K, 500 K, 600 K, 700 K, 800 K, 900 K, 1000 K \\
+\hline
 Cu density 扫描 & 0.0025, 0.005, 0.01, 0.0134, 0.02, 0.03, 0.05 \\
+\hline
 vacancy density 扫描 & 0.0005, 0.001, 0.002, 0.003, 0.005 \\
+\hline
 lattice size 扫描 & 8x8x8, 10x10x10, 12x12x12, 14x14x14, 16x16x16, 18x18x18, 20x20x20, 22x22x22, 24x24x24, 26x26x26 \\
+\hline
 温度/成分/缺陷组合数量 & 350 \\
+\hline
 lattice size 扫描数量 & 10 \\
+\hline
 总 KMC 算例数量 & 360 \\
+\hline
 每组 KMC 步数 & 100 \\
+\hline
 逐步 KMC 记录 & 36000 \\
+\hline
 并行扩展性节点 & 1 到 1024 \\
+\hline
 十种 lattice size speedup & 268.658x, 240.845x, 136.893x, 79.941x, 48.476x, 42.803x, 29.809x, 21.719x, 17.761x, 15.874x \\
-\bottomrule
+\hline
 \end{tabularx}
+\arrayrulecolor{black}
 \end{center}
 
 \section*{4. 主要输出结果}
@@ -110,22 +124,33 @@ lattice size 扫描数量 & 10 \\
 
 \begin{center}
 \small
-\renewcommand{\arraystretch}{1.24}
+\renewcommand{\arraystretch}{1.30}
+\arrayrulecolor{kmcline}
 \begin{tabularx}{\linewidth}{L{0.08\linewidth}L{0.28\linewidth}Y}
-\toprule
+\hline
+\rowcolor{kmclight}
 \textbf{序号} & \textbf{主要输出结果} & \textbf{对应文件} \\
-\midrule
+\hline
 1 & Fe-Cu-vacancy 典型测试算例 & outputs/cases/typical\_cases.json \\
+\hline
 2 & 能量计算结果表 & outputs/tables/energy\_results.csv \\
+\hline
 3 & 软件适配和性能测试记录 & outputs/reports/software\_adaptation\_and\_performance.md; outputs/tables/performance\_records.csv; outputs/tables/module\_timing\_breakdown.csv \\
+\hline
 4 & 跨尺度数据集 & outputs/datasets/multiscale\_dataset.csv; outputs/tables/multiscale\_dataset.csv \\
+\hline
 5 & 材料演化曲线 & outputs/figures/material\_evolution\_curves.png \\
+\hline
 6 & Cu 团簇组织结构图 & outputs/figures/cu\_cluster\_structure.png \\
+\hline
 7 & 计算效率对比表 & outputs/tables/efficiency\_comparison.csv; outputs/figures/runtime\_comparison.png \\
+\hline
 8 & 材料设计优化建议 & outputs/reports/material\_design\_recommendations.md \\
+\hline
 9 & 项目验收报告 & outputs/reports/acceptance\_report.md; outputs/reports/acceptance\_report.tex; outputs/reports/acceptance\_report.pdf \\
-\bottomrule
+\hline
 \end{tabularx}
+\arrayrulecolor{black}
 \end{center}
 
 \section*{5. 验收展示内容}
@@ -141,19 +166,27 @@ lattice size 扫描数量 & 10 \\
 
 \begin{center}
 \small
-\renewcommand{\arraystretch}{1.24}
+\renewcommand{\arraystretch}{1.30}
+\arrayrulecolor{kmcline}
 \begin{tabularx}{\linewidth}{L{0.08\linewidth}L{0.40\linewidth}Y}
-\toprule
+\hline
+\rowcolor{kmclight}
 \textbf{序号} & \textbf{验收展示内容} & \textbf{展示证据} \\
-\midrule
+\hline
 1 & 软件适配结果：说明 Fe-Cu-vacancy 算例可以正常运行 & outputs/logs/model\_call\_log.txt; outputs/tables/stage\_completion\_matrix.csv \\
+\hline
 2 & 性能优化结果：展示优化前后运行时间对比 & outputs/tables/performance\_records.csv; outputs/figures/runtime\_comparison.png \\
+\hline
 3 & 跨尺度数据结果：展示不同温度、成分条件下的数据生成 & outputs/datasets/multiscale\_dataset.csv; outputs/tables/energy\_results.csv \\
+\hline
 4 & 材料演化结果：展示能量变化曲线和 Cu 团簇结构 & outputs/figures/material\_evolution\_curves.png; outputs/figures/cu\_cluster\_structure.png \\
+\hline
 5 & 设计优化结果：给出材料成分和组织调控建议 & outputs/reports/material\_design\_recommendations.md; outputs/tables/composition\_structure\_trends.csv \\
+\hline
 6 & 验收报告：汇总各阶段任务完成情况 & outputs/reports/acceptance\_report.pdf; outputs/reports/output\_audit\_against\_test\_plan.md \\
-\bottomrule
+\hline
 \end{tabularx}
+\arrayrulecolor{black}
 \end{center}
 
 \section*{6. 能量与跨尺度数据}
@@ -188,23 +221,35 @@ lattice size 扫描数量 & 10 \\
 
 \begin{center}
 \small
-\renewcommand{\arraystretch}{1.24}
+\renewcommand{\arraystretch}{1.30}
+\arrayrulecolor{kmcline}
 \begin{tabularx}{\linewidth}{L{0.32\linewidth}Y}
-\toprule
+\hline
+\rowcolor{kmclight}
 \textbf{文档要求} & \textbf{已生成文件} \\
-\midrule
+\hline
 Fe-Cu-vacancy 典型测试算例 & outputs/cases/typical\_cases.json \\
+\hline
 能量计算结果表 & outputs/tables/energy\_results.csv \\
+\hline
 lattice size 扫描结果表 & outputs/tables/lattice\_size\_scan.csv \\
+\hline
 软件适配和性能测试记录 & outputs/reports/software\_adaptation\_and\_performance.md; outputs/tables/module\_timing\_breakdown.csv \\
+\hline
 跨尺度数据集 & outputs/datasets/multiscale\_dataset.csv; outputs/tables/multiscale\_dataset.csv \\
+\hline
 材料演化曲线 & outputs/figures/material\_evolution\_curves.png \\
+\hline
 Cu 团簇组织结构图 & outputs/figures/cu\_cluster\_structure.png \\
+\hline
 计算效率对比表 & outputs/tables/efficiency\_comparison.csv \\
+\hline
 材料设计优化建议 & outputs/reports/material\_design\_recommendations.md \\
+\hline
 项目验收报告 & outputs/reports/acceptance\_report.md; outputs/reports/acceptance\_report.tex; outputs/reports/acceptance\_report.pdf \\
-\bottomrule
+\hline
 \end{tabularx}
+\arrayrulecolor{black}
 \end{center}
 
 \section*{10. 结论}

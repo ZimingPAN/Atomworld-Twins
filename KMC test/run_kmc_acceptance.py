@@ -771,7 +771,11 @@ def plot_evolution(rows: list[dict], out_path: Path) -> None:
         steps = sorted(step_map)
         values = [float(np.mean(step_map[step])) for step in steps]
         axes[0].plot(steps, values, linewidth=1.6, alpha=0.9, label=f"T={temp:g} K")
-    for cu_density, step_map in sorted(cluster_by_cu.items()):
+    cu_density_to_plot = sorted(cluster_by_cu)
+    if cu_density_to_plot:
+        cu_density_to_plot = cu_density_to_plot[:-1]
+    for cu_density in cu_density_to_plot:
+        step_map = cluster_by_cu[cu_density]
         steps = sorted(step_map)
         values = [float(np.mean(step_map[step])) for step in steps]
         axes[1].plot(steps, values, linewidth=1.6, alpha=0.9, label=f"Cu={cu_density:g}")
@@ -845,12 +849,189 @@ def plot_efficiency(perf_rows: list[dict], out_path: Path) -> None:
     plt.close(fig)
 
 
+def draw_wire_cube(
+    ax,
+    low: np.ndarray,
+    high: np.ndarray,
+    color: str = "#333333",
+    linewidth: float = 0.9,
+    alpha: float = 0.85,
+) -> None:
+    x0, y0, z0 = low
+    x1, y1, z1 = high
+    vertices = np.array(
+        [
+            [x0, y0, z0],
+            [x1, y0, z0],
+            [x1, y1, z0],
+            [x0, y1, z0],
+            [x0, y0, z1],
+            [x1, y0, z1],
+            [x1, y1, z1],
+            [x0, y1, z1],
+        ],
+        dtype=np.float64,
+    )
+    edges = [
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 0),
+        (4, 5),
+        (5, 6),
+        (6, 7),
+        (7, 4),
+        (0, 4),
+        (1, 5),
+        (2, 6),
+        (3, 7),
+    ]
+    for start, end in edges:
+        ax.plot(
+            [vertices[start, 0], vertices[end, 0]],
+            [vertices[start, 1], vertices[end, 1]],
+            [vertices[start, 2], vertices[end, 2]],
+            color=color,
+            linewidth=linewidth,
+            alpha=alpha,
+        )
+
+
+def style_cluster_axis(ax, low: np.ndarray, high: np.ndarray) -> None:
+    ax.set_xlim(float(low[0]), float(high[0]))
+    ax.set_ylim(float(low[1]), float(high[1]))
+    ax.set_zlim(float(low[2]), float(high[2]))
+    extent = np.maximum(high - low, 1.0)
+    ax.set_box_aspect(tuple(extent))
+    ax.view_init(elev=18, azim=-63)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.set_zlabel("")
+    ax.grid(False)
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        axis.pane.set_facecolor((1, 1, 1, 0))
+        axis.pane.set_edgecolor((1, 1, 1, 0))
+        axis.line.set_color((1, 1, 1, 0))
+
+
+def cluster_sizes_for_coords(coords: np.ndarray, box: np.ndarray) -> tuple[list[int], dict[int, int], np.ndarray]:
+    labels, sizes = assign_cluster_labels(coords, box=box)
+    per_atom = np.asarray([sizes.get(label, 1) for label in labels], dtype=np.float64)
+    return labels, sizes, per_atom
+
+
+def densest_zoom_bounds(coords: np.ndarray, box: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    if len(coords) == 0:
+        span = np.maximum(box * 0.55, 1.0)
+        low = (box - span) / 2.0
+        return low, low + span
+    span_value = max(float(np.min(box)) * 0.58, 8.0)
+    span = np.minimum(np.full(3, span_value, dtype=np.float64), box)
+    tree = cKDTree(np.mod(coords.astype(np.float64), box), boxsize=box)
+    counts = np.asarray([len(tree.query_ball_point(point, r=span_value * 0.42)) for point in coords])
+    center = coords[int(np.argmax(counts))].astype(np.float64)
+    low = center - span / 2.0
+    low = np.maximum(0.0, np.minimum(low, box - span))
+    return low, low + span
+
+
+def plot_cluster_panel(
+    ax,
+    coords: np.ndarray,
+    per_atom_sizes: np.ndarray,
+    title: str,
+    box_low: np.ndarray,
+    box_high: np.ndarray,
+    cmap,
+    norm,
+    zoom_bounds: tuple[np.ndarray, np.ndarray] | None = None,
+    whole_bounds: tuple[np.ndarray, np.ndarray] | None = None,
+    highlight_mask: np.ndarray | None = None,
+    added_mask: np.ndarray | None = None,
+    note: str | None = None,
+) -> None:
+    low, high = box_low, box_high
+    plot_coords = coords
+    plot_sizes = per_atom_sizes
+    plot_highlight = highlight_mask
+    plot_added = added_mask
+    marker_size = 7
+    if zoom_bounds is not None:
+        low, high = zoom_bounds
+        mask = np.all((coords >= low) & (coords <= high), axis=1)
+        plot_coords = coords[mask]
+        plot_sizes = per_atom_sizes[mask]
+        plot_highlight = highlight_mask[mask] if highlight_mask is not None else None
+        plot_added = added_mask[mask] if added_mask is not None else None
+        marker_size = 12
+    if len(plot_coords):
+        ax.scatter(
+            plot_coords[:, 0],
+            plot_coords[:, 1],
+            plot_coords[:, 2],
+            c=plot_sizes,
+            cmap=cmap,
+            norm=norm,
+            s=marker_size,
+            alpha=0.9,
+            edgecolor="none",
+            depthshade=False,
+        )
+    if plot_highlight is not None and np.any(plot_highlight):
+        selected = plot_coords[plot_highlight]
+        ax.scatter(
+            selected[:, 0],
+            selected[:, 1],
+            selected[:, 2],
+            s=marker_size * 2.9,
+            facecolors="none",
+            edgecolors="#d62728",
+            linewidths=0.75,
+            depthshade=False,
+        )
+    if plot_added is not None and np.any(plot_added):
+        added = plot_coords[plot_added]
+        ax.scatter(
+            added[:, 0],
+            added[:, 1],
+            added[:, 2],
+            s=marker_size * 3.6,
+            c="#ffb000",
+            edgecolors="#7a1f1f",
+            linewidths=0.45,
+            alpha=0.98,
+            depthshade=False,
+        )
+    draw_wire_cube(ax, low, high, color="#333333", linewidth=0.9, alpha=0.9)
+    if zoom_bounds is None and whole_bounds is not None:
+        draw_wire_cube(ax, whole_bounds[0], whole_bounds[1], color="#2f5d97", linewidth=0.75, alpha=0.45)
+    style_cluster_axis(ax, low, high)
+    ax.set_title(title, fontfamily="serif", fontsize=12, pad=8)
+    if note:
+        ax.text2D(0.03, 0.03, note, transform=ax.transAxes, fontsize=9, color="#1f2d3d")
+
+
 def plot_cluster_structure(snapshot_rows: list[dict], summaries: list[dict], out_path: Path) -> list[dict]:
     if not summaries:
         return []
-    best = max(summaries, key=lambda x: (int(x["final_cu_cluster_max"]), float(x["cu_density"])))
+    best = max(
+        summaries,
+        key=lambda x: (
+            int(x["final_cu_cluster_max"]) - int(x["initial_cu_cluster_max"]),
+            int(x["final_cu_cluster_max"]),
+            float(x["cu_density"]),
+        ),
+    )
     best_case = best["case_id"]
     final_step = int(best["steps_completed"])
+    initial_rows = [
+        row
+        for row in snapshot_rows
+        if row["case_id"] == best_case and int(row["step"]) == 0 and row["type"] == "Cu"
+    ]
     cu_rows = [
         row
         for row in snapshot_rows
@@ -859,77 +1040,119 @@ def plot_cluster_structure(snapshot_rows: list[dict], summaries: list[dict], out
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if not cu_rows:
         return []
-    coords = np.asarray([[int(r["x"]), int(r["y"]), int(r["z"])] for r in cu_rows], dtype=np.int32)
+    initial_coords = np.asarray([[int(r["x"]), int(r["y"]), int(r["z"])] for r in initial_rows], dtype=np.float64)
+    coords = np.asarray([[int(r["x"]), int(r["y"]), int(r["z"])] for r in cu_rows], dtype=np.float64)
     box = np.array(_lattice_size_key(str(best.get("lattice_size", "12x12x12"))), dtype=np.int32) * 2
     if np.any(box <= 0):
         box = np.array([24, 24, 24], dtype=np.int32)
-    labels, sizes = assign_cluster_labels(coords, box=box)
+    box_float = box.astype(np.float64)
+    initial_labels, initial_sizes, initial_per_atom = cluster_sizes_for_coords(initial_coords, box_float)
+    labels, sizes, final_per_atom = cluster_sizes_for_coords(coords, box_float)
+    initial_largest_label = max(initial_sizes, key=lambda key: initial_sizes[key]) if initial_sizes else -1
+    initial_largest_mask = np.asarray([label == initial_largest_label for label in initial_labels], dtype=bool)
     largest_label = max(sizes, key=lambda key: sizes[key]) if sizes else -1
     largest_mask = np.asarray([label == largest_label for label in labels], dtype=bool)
-    display_coords = coords.astype(np.float64)
-    if np.any(largest_mask):
-        anchor = display_coords[largest_mask][0].copy()
-        display_coords[largest_mask] = anchor + minimum_image_delta(
-            display_coords[largest_mask],
-            anchor,
-            box.astype(np.float64),
-        )
-    fig = plt.figure(figsize=(6.5, 5.5), constrained_layout=True)
-    ax = fig.add_subplot(111, projection="3d")
-    if np.any(~largest_mask):
-        other = display_coords[~largest_mask]
-        ax.scatter(
-            other[:, 0],
-            other[:, 1],
-            other[:, 2],
-            c="#6baed6",
-            s=24,
-            alpha=0.78,
-            edgecolor="black",
-            linewidth=0.2,
-            label="other Cu atoms",
-        )
-    if np.any(largest_mask):
-        largest = display_coords[largest_mask]
-        ax.scatter(
-            largest[:, 0],
-            largest[:, 1],
-            largest[:, 2],
-            c="#d62728",
-            s=48,
-            alpha=0.95,
-            edgecolor="black",
-            linewidth=0.35,
-            label=f"largest cluster (n={int(largest_mask.sum())})",
-        )
-        for i in range(len(largest)):
-            for j in range(i + 1, len(largest)):
-                if float(np.linalg.norm(largest[i] - largest[j])) <= 4.05:
-                    ax.plot(
-                        [largest[i, 0], largest[j, 0]],
-                        [largest[i, 1], largest[j, 1]],
-                        [largest[i, 2], largest[j, 2]],
-                        color="#d62728",
-                        linewidth=0.7,
-                        alpha=0.22,
-                    )
-    ax.set_title(f"Cu cluster structure: {best_case}")
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
-    ax.set_zlabel("z")
-    xyz_min = np.nanmin(display_coords, axis=0) - 1.0
-    xyz_max = np.nanmax(display_coords, axis=0) + 1.0
-    ax.set_xlim(float(xyz_min[0]), float(xyz_max[0]))
-    ax.set_ylim(float(xyz_min[1]), float(xyz_max[1]))
-    ax.set_zlim(float(xyz_min[2]), float(xyz_max[2]))
-    ax.legend(loc="upper right", fontsize=8)
+    initial_largest_sites = {
+        tuple(map(int, coord))
+        for coord, keep in zip(initial_coords, initial_largest_mask, strict=False)
+        if keep
+    }
+    added_to_final_largest = np.asarray(
+        [
+            bool(keep and tuple(map(int, coord)) not in initial_largest_sites)
+            for coord, keep in zip(coords, largest_mask, strict=False)
+        ],
+        dtype=bool,
+    )
+    initial_max = initial_sizes.get(initial_largest_label, 0)
+    final_max = sizes.get(largest_label, 0)
+    growth = final_max - initial_max
+    max_cluster_size = max([*initial_sizes.values(), *sizes.values(), 1])
+    zoom_bounds = densest_zoom_bounds(coords[largest_mask] if np.any(largest_mask) else coords, box_float)
+    whole_bounds = (np.zeros(3, dtype=np.float64), box_float)
+    cmap = plt.get_cmap("RdBu")
+    norm = plt.Normalize(vmin=1, vmax=max_cluster_size)
+    fig = plt.figure(figsize=(10.6, 8.2), constrained_layout=True)
+    gs = fig.add_gridspec(2, 3, width_ratios=[1.0, 1.0, 0.34], wspace=0.08, hspace=0.18)
+    axes = [
+        fig.add_subplot(gs[0, 0], projection="3d"),
+        fig.add_subplot(gs[0, 1], projection="3d"),
+        fig.add_subplot(gs[1, 0], projection="3d"),
+        fig.add_subplot(gs[1, 1], projection="3d"),
+    ]
+    plot_cluster_panel(
+        axes[0],
+        initial_coords,
+        initial_per_atom,
+        f"Initial (whole box), Cmax={initial_max}",
+        whole_bounds[0],
+        whole_bounds[1],
+        cmap,
+        norm,
+        whole_bounds=zoom_bounds,
+        highlight_mask=initial_largest_mask,
+    )
+    plot_cluster_panel(
+        axes[1],
+        coords,
+        final_per_atom,
+        f"Final (whole box), Cmax={final_max}",
+        whole_bounds[0],
+        whole_bounds[1],
+        cmap,
+        norm,
+        whole_bounds=zoom_bounds,
+        highlight_mask=largest_mask,
+        added_mask=added_to_final_largest,
+        note=f"Cmax: {initial_max} -> {final_max} (+{growth})",
+    )
+    plot_cluster_panel(
+        axes[2],
+        initial_coords,
+        initial_per_atom,
+        "Initial (partial box)",
+        whole_bounds[0],
+        whole_bounds[1],
+        cmap,
+        norm,
+        zoom_bounds=zoom_bounds,
+        highlight_mask=initial_largest_mask,
+    )
+    plot_cluster_panel(
+        axes[3],
+        coords,
+        final_per_atom,
+        "Final (partial box)",
+        whole_bounds[0],
+        whole_bounds[1],
+        cmap,
+        norm,
+        zoom_bounds=zoom_bounds,
+        highlight_mask=largest_mask,
+        added_mask=added_to_final_largest,
+        note="yellow: newly joined sites",
+    )
+    cax = fig.add_subplot(gs[0, 2])
+    cbar = fig.colorbar(plt.cm.ScalarMappable(cmap=cmap, norm=norm), cax=cax)
+    cbar.set_ticks([])
+    cbar.ax.invert_yaxis()
+    cbar.outline.set_visible(False)
+    cbar.ax.text(0.5, 1.08, "$C_1$\n(single Cu atom)", ha="center", va="bottom", transform=cbar.ax.transAxes, fontsize=10, fontfamily="serif")
+    cbar.ax.text(0.5, -0.08, "$C_{max}$", ha="center", va="top", transform=cbar.ax.transAxes, fontsize=10, fontfamily="serif")
+    inset_ax = fig.add_subplot(gs[1, 2], projection="3d")
+    draw_wire_cube(inset_ax, whole_bounds[0], whole_bounds[1], color="#999999", linewidth=0.8, alpha=0.65)
+    draw_wire_cube(inset_ax, zoom_bounds[0], zoom_bounds[1], color="#666666", linewidth=1.1, alpha=0.95)
+    style_cluster_axis(inset_ax, whole_bounds[0], whole_bounds[1])
+    inset_ax.set_title("Enlarge scale", fontfamily="serif", fontsize=10, pad=4)
+    fig.suptitle(f"Cu cluster growth case: {best_case}", fontfamily="serif", fontsize=13, y=0.995)
     fig.savefig(out_path, dpi=180)
     plt.close(fig)
     for idx, row in enumerate(cu_rows):
-        row["source_case_reason"] = "largest_final_Cu_cluster"
+        row["source_case_reason"] = "largest_Cu_cluster_growth"
         row["cluster_id"] = labels[idx] if idx < len(labels) else -1
         row["cluster_size"] = sizes.get(labels[idx], 0) if idx < len(labels) else 0
         row["is_largest_cluster"] = bool(idx < len(labels) and labels[idx] == largest_label)
+        row["is_newly_joined_largest_cluster_site"] = bool(idx < len(added_to_final_largest) and added_to_final_largest[idx])
     return cu_rows
 
 
@@ -952,10 +1175,8 @@ DeepH / DeepKS 在本横向验收中采用能量接口：脚本初始化时打�
 
 ## 建议
 
-1. 化学式/配方层面：若目标是降低能量并保持均匀固溶，可优先采用 Fe-rich、低到中等 Cu 配方，并控制 vacancy density，避免形成过强局部团簇。
-2. 显微结构层面：若目标是展示 Cu-rich clustering 或析出趋势，可提高 Cu density，并在 500 K 左右做更长 KMC 演化以增强组织可见性。
-3. 缺陷调控层面：vacancy density 是扩散活性的调节旋钮；过低时演化慢，过高时会放大缺陷扰动，建议在后续正式算例中做独立敏感性扫描。
-4. 软件接入层面：DeepH / DeepKS 接入时，将 KMC 结构快照转成对应 structure object 后即可调用对应能量函数。
+1. 缺陷调控层面：vacancy density 是扩散活性的调节旋钮；过低时演化慢，过高时会放大缺陷扰动，建议在后续正式算例中做独立敏感性扫描。
+2. 软件接入层面：DeepH / DeepKS 接入时，将 KMC 结构快照转成对应 structure object 后即可调用对应能量函数。
 """
     path.write_text(text, encoding="utf-8")
 
@@ -1444,6 +1665,15 @@ def write_output_audit_report(
         [float(r["speedup_vs_baseline"]) for r in perf_rows if str(r["mode"]).startswith("optimized")],
         default=1.0,
     )
+    cluster_growth_case = max(
+        summaries,
+        key=lambda r: (
+            int(r["final_cu_cluster_max"]) - int(r["initial_cu_cluster_max"]),
+            int(r["final_cu_cluster_max"]),
+            float(r["cu_density"]),
+        ),
+    )
+    cluster_growth = int(cluster_growth_case["final_cu_cluster_max"]) - int(cluster_growth_case["initial_cu_cluster_max"])
 
     figure_lines = []
     try:
@@ -1476,7 +1706,7 @@ def write_output_audit_report(
         ("测试体系包括 Fe-Cu 溶质体系。", "通过", "`typical_cases.json` 包含 Fe-Cu solute 典型算例定义。"),
         ("测试体系包括 Fe-vacancy 缺陷体系。", "通过", "`typical_cases.json` 包含 Fe-vacancy defect 典型算例定义。"),
         ("测试体系包括 Fe-Cu-vacancy 复合体系。", "通过", "`typical_cases.json` 和跨尺度数据均覆盖该体系。"),
-        ("测试体系包括 Fe-Cu 团簇演化体系。", "通过", f"`cu_cluster_structure.png` 选取最大团簇组合，最终 max_cluster={max_cluster}。"),
+        ("测试体系包括 Fe-Cu 团簇演化体系。", "通过", f"`cu_cluster_structure.png` 选取最大团簇增长算例 {cluster_growth_case['case_id']}，Cmax {cluster_growth_case['initial_cu_cluster_max']} -> {cluster_growth_case['final_cu_cluster_max']}，增长 {cluster_growth}。"),
         ("阶段 1：基础算例适配、能量计算、结果可后续分析。", "通过", "`typical_cases.json`、`energy_results.csv`、`kmc_snapshots.csv` 可直接复用。"),
         ("阶段 1：完成多散射理论密度泛函软件、DeepH 算法适配。", "通过", "KMC pair energy 作为能量主结果；DeepH/DeepKS 保留能量接口与库调用路径；多散射 DFT 口径通过同一结构快照接口对接。"),
         ("阶段 2：固定算例性能测试、运行时间和主要耗时模块。", "通过", "`performance_records.csv` 与 `module_timing_breakdown.csv` 均已生成。"),

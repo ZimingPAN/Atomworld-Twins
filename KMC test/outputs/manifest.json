@@ -10,7 +10,7 @@
     },
     {
       "path": "outputs/datasets/cu_cluster_coordinates.csv",
-      "bytes": 10243
+      "bytes": 11434
     },
     {
       "path": "outputs/datasets/kmc_snapshots.csv",
@@ -22,11 +22,11 @@
     },
     {
       "path": "outputs/figures/cu_cluster_structure.png",
-      "bytes": 311282
+      "bytes": 416153
     },
     {
       "path": "outputs/figures/material_evolution_curves.png",
-      "bytes": 311815
+      "bytes": 307881
     },
     {
       "path": "outputs/figures/runtime_comparison.png",
@@ -41,36 +41,44 @@
       "bytes": 987
     },
     {
+      "path": "outputs/reports/.DS_Store",
+      "bytes": 8196
+    },
+    {
+      "path": "outputs/reports/acceptance_report.docx",
+      "bytes": 12326
+    },
+    {
       "path": "outputs/reports/acceptance_report.md",
       "bytes": 6309
     },
     {
       "path": "outputs/reports/acceptance_report.pdf",
-      "bytes": 99586
+      "bytes": 100491
     },
     {
       "path": "outputs/reports/acceptance_report.tex",
-      "bytes": 10459
+      "bytes": 10955
     },
     {
       "path": "outputs/reports/kmc_test_document.md",
-      "bytes": 10145
+      "bytes": 10706
     },
     {
       "path": "outputs/reports/kmc_test_document.pdf",
-      "bytes": 749649
+      "bytes": 844008
     },
     {
       "path": "outputs/reports/kmc_test_document.tex",
-      "bytes": 13534
+      "bytes": 15298
     },
     {
       "path": "outputs/reports/material_design_recommendations.md",
-      "bytes": 1341
+      "bytes": 982
     },
     {
       "path": "outputs/reports/output_audit_against_test_plan.md",
-      "bytes": 6730
+      "bytes": 6750
     },
     {
       "path": "outputs/reports/software_adaptation_and_performance.md",

@@ -123,20 +123,21 @@ Fe-Cu-vacancy 合金体系测试 | 结果整理版 | 2026-05-18
 | Cu 最大团簇范围 | 1 到 167 |
 | 十种 lattice size speedup | 268.658x, 240.845x, 136.893x, 79.941x, 48.476x, 42.803x, 29.809x, 21.719x, 17.761x, 15.874x |
 | DeepH / DeepKS 并行扩展性记录 | 覆盖 1 到 1024 节点 |
-| 输出清单记录文件数 | 30（不含 manifest 自身） |
+| 输出清单记录文件数 | 32（不含 manifest 自身） |
 
 ## 8. 图形结果
 
 - 图 1：`outputs/figures/material_evolution_curves.png`，展示温度下能量变化、Cu density 下团簇演化、vacancy density 下物理时间演化。
+  - 图示说明：左图展示不同温度条件下平均能量随 KMC step 的变化；中图展示不同 Cu density 条件下最大 Cu 团簇尺寸变化，并去除了最高 Cu density 曲线以突出低中 Cu 含量差异；右图展示不同 vacancy density 条件下物理时间推进差异。
 - 图 2：`outputs/figures/cu_cluster_structure.png`，展示 Cu 团簇组织结构图。
+  - 图示说明：图中选取最大 Cu 团簇增长最明显的算例，上排给出初始与最终 whole box 的 Cu 原子空间分布，下排给出局部放大区域；红色描边表示当前最大团簇，黄色点表示最终最大团簇中新加入的 Cu 位点，用于突出 initial 到 final 的团簇增长。
 - 图 3：`outputs/figures/runtime_comparison.png`，展示优化前后运行时间对比。
+  - 图示说明：左图使用对数坐标比较全量速率刷新 baseline 与增量更新模式的运行时间，右图给出各 lattice size 下的 measured speedup，用于展示性能优化趋势。
 
 ## 9. 材料设计建议
 
 - 单位位点能量最低组合为 `ms_315`：T=1000 K，Cu=0.0025，V=0.0005。
 - Cu 团簇最大组合为 `ms_034`：T=250 K，Cu=0.05，V=0.005，max_cluster=167。
-- 若目标是降低能量并保持均匀固溶，建议优先采用 Fe-rich、低到中等 Cu 配方，并控制 vacancy density。
-- 若目标是展示 Cu-rich clustering 或析出趋势，建议提高 Cu density，并在中高温条件下延长 KMC 演化步数。
 
 ## 10. 输出文件索引与结论
 
